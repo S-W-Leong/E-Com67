@@ -17,7 +17,8 @@ from aws_cdk import (
     aws_events_targets as targets,
     aws_logs as logs,
     aws_lambda_event_sources as lambda_event_sources,
-    aws_cloudwatch as cloudwatch
+    aws_cloudwatch as cloudwatch,
+    aws_ec2 as ec2
 )
 import os
 import json
@@ -172,7 +173,7 @@ class ECom67Stack(Stack):
             self, "ECom67UserPool",
             user_pool_name="e-com67-user-pool",
             self_sign_up_enabled=True,
-            auto_verified_attributes=[cognito.UserPoolEmail.ADDRESS],
+            auto_verify=cognito.AutoVerifiedAttrs(email=True),
             password_policy=cognito.PasswordPolicy(
                 min_length=8,
                 require_lowercase=True,
@@ -197,7 +198,7 @@ class ECom67Stack(Stack):
 
     def create_lambda_layers(self):
         """Create Lambda layers for shared code and dependencies"""
-        lambda_dir = os.path.join(os.path.dirname(__file__), "..", "lambda")
+        lambda_dir = os.path.join(os.path.dirname(__file__), "..", "..", "backend", "lambda")
         
         # Common utilities layer - create if it doesn't exist
         common_layer_path = os.path.join(lambda_dir, "layers", "common_utils")
@@ -214,7 +215,7 @@ class ECom67Stack(Stack):
 
     def create_lambda_functions(self):
         """Create Lambda functions for business logic"""
-        lambda_dir = os.path.join(os.path.dirname(__file__), "..", "lambda")
+        lambda_dir = os.path.join(os.path.dirname(__file__), "..", "..", "backend", "lambda")
         
         # Product CRUD Function
         product_fn_path = os.path.join(lambda_dir, "products")
@@ -361,16 +362,17 @@ class ECom67Stack(Stack):
         self.opensearch_domain = opensearch.Domain(
             self, "ECom67SearchDomain",
             version=opensearch.EngineVersion.OPENSEARCH_2_9,
-            capacity=opensearch.Capacity(
-                data_node_instance_type="t3.small.opensearch",
-                data_nodes=1
+            capacity=opensearch.CapacityConfig(
+                data_node_instance_type="t3.small.search",
+                data_nodes=1,
+                multi_az_with_standby_enabled=False
             ),
             removal_policy=RemovalPolicy.DESTROY,
-            ebs=opensearch.Ebs(
+            ebs=opensearch.EbsOptions(
                 enabled=True,
                 volume_size=10,
-                volume_type=ec2_volume_type.EbsDeviceVolumeType.GP3
-            ) if 'ec2_volume_type' in dir() else None
+                volume_type=ec2.EbsDeviceVolumeType.GP3
+            )
         )
 
     def create_messaging(self):

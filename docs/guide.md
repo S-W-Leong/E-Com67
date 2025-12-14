@@ -5,13 +5,14 @@
 2. [CDK Stack Structure](#cdk-stack-structure)
 3. [Lambda Functions](#lambda-functions)
 4. [API Endpoints](#api-endpoints)
-5. [Frontend Pages](#frontend-pages)
-6. [Deployment Steps](#deployment-steps)
-7. [Testing Checklist](#testing-checklist)
+5. [Frontend Architecture](#frontend-architecture)
+6. [Frontend Setup & Components](#frontend-setup--components)
+7. [Deployment Steps](#deployment-steps)
+8. [Testing Checklist](#testing-checklist)
 
 ---
 
-## Architecture Summary
+## Backend Architecture Summary
 
 ### Core User Flows
 
@@ -765,56 +766,316 @@ def process_order(order_data):
 
 ---
 
-## Frontend Structure
+## Frontend Architecture
 
-### React Pages
+### Frontend Tech Stack
+- **React 18** - UI framework
+- **AWS Amplify** - Authentication and API integration
+- **Tailwind CSS** - Styling and responsive design
+- **React Router** - Client-side navigation
+- **Axios** - HTTP client for API calls
+
+### Frontend Project Structure
 
 ```
 frontend/
 ├── src/
-│   ├── pages/
-│   │   ├── Login.jsx           # Cognito authentication
-│   │   ├── Products.jsx        # Product listing with search
-│   │   ├── ProductDetail.jsx   # Single product view
-│   │   ├── Cart.jsx            # Shopping cart
-│   │   ├── Checkout.jsx        # Payment with Stripe
-│   │   └── Orders.jsx          # Order history
-│   ├── components/
-│   │   ├── Navbar.jsx
-│   │   ├── ProductCard.jsx
-│   │   ├── ChatWidget.jsx      # WebSocket chat
-│   │   └── SearchBar.jsx
-│   ├── services/
-│   │   ├── api.js              # API calls
-│   │   ├── auth.js             # Cognito integration
-│   │   └── websocket.js        # WebSocket connection
-│   └── App.js
+│   ├── pages/                    # Page components
+│   │   ├── Login.jsx             # Cognito authentication (signup/login)
+│   │   ├── Products.jsx          # Product listing with filters
+│   │   ├── ProductDetail.jsx     # Single product view
+│   │   ├── Cart.jsx              # Shopping cart management
+│   │   ├── Checkout.jsx          # Payment processing
+│   │   └── Orders.jsx            # Order history
+│   ├── components/               # Reusable components
+│   │   ├── Navbar.jsx            # Top navigation bar
+│   │   ├── ProductCard.jsx       # Product display card
+│   │   ├── ChatWidget.jsx        # AI chat interface
+│   │   └── SearchBar.jsx         # Product search
+│   ├── services/                 # API and utility services
+│   │   ├── api.js                # API Gateway calls
+│   │   ├── auth.js               # Amplify Auth wrapper
+│   │   └── websocket.js          # WebSocket connections
+│   ├── aws-exports.js            # Amplify configuration
+│   ├── App.js                    # Main app component
+│   ├── App.css                   # Global styles
+│   └── index.js                  # React entry point
+├── public/
+│   ├── index.html                # HTML template
+│   └── favicon.ico
+├── package.json                  # Node dependencies
+├── .env.local                    # Environment variables (not in git)
+├── tailwind.config.js            # Tailwind CSS config
+└── postcss.config.js             # PostCSS config
 ```
 
-### Sample React Component (Products.jsx)
+### Frontend Key Features
+
+1. **Authentication (Cognito + Amplify)**
+   - User signup with email verification
+   - Login/logout functionality
+   - JWT token management
+   - Protected routes
+
+2. **Product Management**
+   - Browse all products
+   - Filter by category
+   - Search functionality
+   - Product detail view
+
+3. **Shopping Cart**
+   - Add/remove items
+   - Update quantities
+   - Persistent cart state
+   - Real-time total calculation
+
+4. **Checkout & Payment**
+   - Order review
+   - Stripe integration
+   - Order confirmation
+   - Order history
+
+5. **AI Chat**
+   - Real-time WebSocket connection
+   - Chat history
+   - Product recommendations
+   - Bedrock Claude integration
+
+---
+
+## Frontend Setup & Components
+
+### Amplify Configuration - `aws-exports.js`
+
+```javascript
+const awsconfig = {
+  Auth: {
+    region: 'us-east-1',
+    userPoolId: 'YOUR_USER_POOL_ID',        // From CDK output
+    userPoolWebClientId: 'YOUR_CLIENT_ID',  // From CDK output
+  },
+  API: {
+    endpoints: [
+      {
+        name: 'ECom67Api',
+        endpoint: 'YOUR_API_ENDPOINT',       // From CDK output
+        region: 'us-east-1',
+      },
+    ],
+  },
+};
+
+export default awsconfig;
+```
+
+### App.js - Main Application
+
+```javascript
+import React from 'react';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { Auth } from 'aws-amplify';
+import Login from './pages/Login';
+import Products from './pages/Products';
+import Cart from './pages/Cart';
+import Checkout from './pages/Checkout';
+import Orders from './pages/Orders';
+import Navbar from './components/Navbar';
+import './App.css';
+
+function App() {
+  const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    checkUser();
+  }, []);
+
+  const checkUser = async () => {
+    try {
+      const currentUser = await Auth.currentAuthenticatedUser();
+      setUser(currentUser);
+    } catch (err) {
+      setUser(null);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (loading) {
+    return <div className="flex justify-center items-center h-screen">Loading...</div>;
+  }
+
+  return (
+    <Router>
+      {user && <Navbar user={user} onLogout={() => setUser(null)} />}
+      <Routes>
+        {!user ? (
+          <>
+            <Route path="/login" element={<Login onSuccess={checkUser} />} />
+            <Route path="*" element={<Navigate to="/login" />} />
+          </>
+        ) : (
+          <>
+            <Route path="/products" element={<Products />} />
+            <Route path="/cart" element={<Cart />} />
+            <Route path="/checkout" element={<Checkout />} />
+            <Route path="/orders" element={<Orders />} />
+            <Route path="/" element={<Navigate to="/products" />} />
+          </>
+        )}
+      </Routes>
+    </Router>
+  );
+}
+
+export default App;
+```
+
+### Login Page - `pages/Login.jsx`
+
+```javascript
+import React, { useState } from 'react';
+import { Auth } from 'aws-amplify';
+import { useNavigate } from 'react-router-dom';
+
+function Login({ onSuccess }) {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [isSignUp, setIsSignUp] = useState(false);
+  const navigate = useNavigate();
+
+  const handleLogin = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    setError('');
+
+    try {
+      await Auth.signIn(email, password);
+      onSuccess();
+      navigate('/products');
+    } catch (err) {
+      setError(err.message || 'Login failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSignUp = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    setError('');
+
+    try {
+      await Auth.signUp({
+        username: email,
+        password: password,
+        attributes: {
+          email: email,
+        },
+      });
+      alert('Sign up successful! Please check your email for verification.');
+      setIsSignUp(false);
+      setEmail('');
+      setPassword('');
+    } catch (err) {
+      setError(err.message || 'Sign up failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="flex justify-center items-center min-h-screen bg-gradient-to-br from-blue-500 to-purple-600">
+      <div className="bg-white p-8 rounded-lg shadow-2xl w-96">
+        <h2 className="text-3xl font-bold mb-6 text-center">
+          {isSignUp ? 'Create Account' : 'Login to E-Com67'}
+        </h2>
+
+        {error && (
+          <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
+            {error}
+          </div>
+        )}
+
+        <form onSubmit={isSignUp ? handleSignUp : handleLogin}>
+          <input
+            type="email"
+            placeholder="Email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            className="w-full px-4 py-3 mb-4 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            required
+          />
+
+          <input
+            type="password"
+            placeholder="Password (min 8 chars)"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            className="w-full px-4 py-3 mb-6 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            required
+          />
+
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full bg-blue-500 text-white py-3 rounded-lg hover:bg-blue-600 disabled:opacity-50 font-bold transition"
+          >
+            {loading ? 'Loading...' : isSignUp ? 'Sign Up' : 'Login'}
+          </button>
+        </form>
+
+        <p className="text-center mt-6 text-gray-600">
+          {isSignUp ? 'Already have an account?' : "Don't have an account?"}{' '}
+          <button
+            onClick={() => {
+              setIsSignUp(!isSignUp);
+              setError('');
+            }}
+            className="text-blue-500 hover:underline font-bold"
+          >
+            {isSignUp ? 'Login' : 'Sign Up'}
+          </button>
+        </p>
+      </div>
+    </div>
+  );
+}
+
+export default Login;
+```
+
+### Products Page - `pages/Products.jsx`
+
 ```javascript
 import React, { useState, useEffect } from 'react';
-import { searchProducts, listProducts } from '../services/api';
+import { API } from 'aws-amplify';
 import ProductCard from '../components/ProductCard';
 import SearchBar from '../components/SearchBar';
 
 function Products() {
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [category, setCategory] = useState('');
 
   useEffect(() => {
     loadProducts();
-  }, []);
+  }, [category]);
 
-  const loadProducts = async (category = null) => {
-    setLoading(true);
+  const loadProducts = async () => {
     try {
-      const data = await listProducts(category);
-      setProducts(data);
-    } catch (error) {
-      console.error('Failed to load products:', error);
+      setLoading(true);
+      const params = category ? { queryStringParameters: { category } } : {};
+      const response = await API.get('ECom67Api', '/products', params);
+      setProducts(response || []);
+    } catch (err) {
+      console.error('Failed to load products:', err);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   const handleSearch = async (query) => {
@@ -823,22 +1084,47 @@ function Products() {
       return;
     }
     
-    setLoading(true);
     try {
-      const results = await searchProducts(query);
-      setProducts(results);
-    } catch (error) {
-      console.error('Search failed:', error);
+      setLoading(true);
+      const results = await API.get('ECom67Api', '/search', {
+        queryStringParameters: { q: query }
+      });
+      setProducts(results || []);
+    } catch (err) {
+      console.error('Search failed:', err);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
+
+  if (loading) return <div className="text-center py-8">Loading products...</div>;
 
   return (
     <div className="container mx-auto p-4">
-      <SearchBar onSearch={handleSearch} />
+      <h1 className="text-4xl font-bold mb-6">Products</h1>
       
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-6">
-        {products.map(product => (
+      <SearchBar onSearch={handleSearch} />
+
+      <div className="my-4 flex gap-2">
+        <button
+          onClick={() => setCategory('')}
+          className={`px-4 py-2 rounded ${!category ? 'bg-blue-500 text-white' : 'bg-gray-200'}`}
+        >
+          All
+        </button>
+        {['Electronics', 'Clothing', 'Books', 'Home'].map(cat => (
+          <button
+            key={cat}
+            onClick={() => setCategory(cat)}
+            className={`px-4 py-2 rounded ${category === cat ? 'bg-blue-500 text-white' : 'bg-gray-200'}`}
+          >
+            {cat}
+          </button>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6">
+        {products.map((product) => (
           <ProductCard key={product.productId} product={product} />
         ))}
       </div>
@@ -848,6 +1134,198 @@ function Products() {
 
 export default Products;
 ```
+
+### Cart Page - `pages/Cart.jsx`
+
+```javascript
+import React, { useState, useEffect } from 'react';
+import { API } from 'aws-amplify';
+import { useNavigate } from 'react-router-dom';
+
+function Cart() {
+  const [cartItems, setCartItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    loadCart();
+  }, []);
+
+  const loadCart = async () => {
+    try {
+      const response = await API.get('ECom67Api', '/cart');
+      setCartItems(response || []);
+    } catch (err) {
+      console.error('Failed to load cart:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const removeFromCart = async (productId) => {
+    try {
+      await API.del('ECom67Api', '/cart', {
+        queryStringParameters: { productId },
+      });
+      loadCart();
+    } catch (err) {
+      console.error('Failed to remove from cart:', err);
+    }
+  };
+
+  const updateQuantity = async (productId, quantity) => {
+    try {
+      await API.post('ECom67Api', '/cart', {
+        body: { productId, quantity },
+      });
+      loadCart();
+    } catch (err) {
+      console.error('Failed to update quantity:', err);
+    }
+  };
+
+  if (loading) return <div>Loading cart...</div>;
+
+  const total = cartItems.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+
+  return (
+    <div className="container mx-auto p-4">
+      <h1 className="text-4xl font-bold mb-6">Shopping Cart</h1>
+
+      {cartItems.length === 0 ? (
+        <div className="text-center py-8">
+          <p className="text-xl text-gray-600 mb-4">Your cart is empty</p>
+          <button
+            onClick={() => navigate('/products')}
+            className="bg-blue-500 text-white px-6 py-2 rounded hover:bg-blue-600"
+          >
+            Continue Shopping
+          </button>
+        </div>
+      ) : (
+        <>
+          <div className="space-y-4 mb-8">
+            {cartItems.map((item) => (
+              <div key={item.productId} className="border rounded-lg p-4 flex justify-between items-center bg-gray-50">
+                <div>
+                  <h3 className="font-bold text-lg">{item.name}</h3>
+                  <p className="text-gray-600">Price: ${item.price.toFixed(2)}</p>
+                </div>
+                <div className="flex items-center gap-4">
+                  <input
+                    type="number"
+                    min="1"
+                    value={item.quantity}
+                    onChange={(e) => updateQuantity(item.productId, parseInt(e.target.value))}
+                    className="w-12 px-2 py-1 border rounded"
+                  />
+                  <p className="font-bold">${(item.price * item.quantity).toFixed(2)}</p>
+                  <button
+                    onClick={() => removeFromCart(item.productId)}
+                    className="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600"
+                  >
+                    Remove
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="border-t-2 pt-4 bg-gray-100 p-4 rounded">
+            <p className="text-3xl font-bold mb-6 text-right">Total: ${total.toFixed(2)}</p>
+            <button
+              onClick={() => navigate('/checkout')}
+              className="w-full bg-green-500 text-white py-3 rounded-lg hover:bg-green-600 text-lg font-bold"
+            >
+              Proceed to Checkout
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+export default Cart;
+```
+
+### Navbar Component - `components/Navbar.jsx`
+
+```javascript
+import React from 'react';
+import { useNavigate, Link } from 'react-router-dom';
+import { Auth } from 'aws-amplify';
+
+function Navbar({ user, onLogout }) {
+  const navigate = useNavigate();
+
+  const handleLogout = async () => {
+    try {
+      await Auth.signOut();
+      onLogout();
+      navigate('/login');
+    } catch (err) {
+      console.error('Logout failed:', err);
+    }
+  };
+
+  return (
+    <nav className="bg-gradient-to-r from-blue-600 to-purple-600 text-white shadow-lg">
+      <div className="container mx-auto px-4 py-4 flex justify-between items-center">
+        <Link to="/products" className="text-2xl font-bold hover:opacity-80">
+          🛍️ E-Com67
+        </Link>
+        
+        <div className="flex gap-6 items-center">
+          <Link to="/products" className="hover:underline transition">
+            Products
+          </Link>
+          <Link to="/cart" className="hover:underline transition">
+            Cart
+          </Link>
+          <Link to="/orders" className="hover:underline transition">
+            Orders
+          </Link>
+          
+          <div className="border-l border-white pl-4 flex items-center gap-4">
+            <span className="text-sm">{user?.attributes?.email}</span>
+            <button
+              onClick={handleLogout}
+              className="bg-red-500 hover:bg-red-600 px-4 py-2 rounded transition"
+            >
+              Logout
+            </button>
+          </div>
+        </div>
+      </div>
+    </nav>
+  );
+}
+
+export default Navbar;
+```
+
+### Frontend Installation & Running
+
+```bash
+# Navigate to frontend
+cd frontend
+
+# Install dependencies
+npm install
+
+# Create .env.local with CDK outputs
+cat > .env.local << EOF
+REACT_APP_API_ENDPOINT=your-api-endpoint-from-cdk
+REACT_APP_USER_POOL_ID=your-user-pool-id
+REACT_APP_USER_POOL_CLIENT_ID=your-client-id
+EOF
+
+# Start development server
+npm start
+```
+
+---
 
 ---
 
@@ -882,34 +1360,104 @@ export default Products;
 
 ## Deployment Steps
 
+### Backend Deployment (CDK)
+
 ```bash
-# 1. Install dependencies
+# 1. Navigate to backend
+cd backend
+
+# 2. Create and activate virtual environment
+python -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+
+# 3. Install Python dependencies
 pip install -r requirements.txt
 
-# 2. Set environment variables
+# 4. Set environment variables
 export AWS_ACCOUNT_ID=your-account-id
 export AWS_REGION=us-east-1
-export STRIPE_API_KEY=your-stripe-test-key
 
-# 3. Bootstrap CDK (first time only)
+# 5. Bootstrap CDK (first time only)
 cdk bootstrap aws://$AWS_ACCOUNT_ID/$AWS_REGION
 
-# 4. Synthesize CloudFormation template
+# 6. Synthesize CloudFormation template
 cdk synth
 
-# 5. Deploy stack
-cdk deploy --all
+# 7. Review and deploy stack
+cdk deploy
 
-# 6. Get outputs
+# 8. Get CDK outputs (save these for frontend)
 aws cloudformation describe-stacks \
     --stack-name e-com67Stack \
     --query "Stacks[0].Outputs"
+```
 
-# 7. Deploy frontend
-cd frontend
+### Frontend Deployment (React)
+
+```bash
+# 1. Navigate to frontend
+cd ../frontend
+
+# 2. Install Node dependencies
+npm install
+
+# 3. Create .env.local with CDK outputs
+cat > .env.local << EOF
+REACT_APP_API_ENDPOINT=https://xxx.execute-api.us-east-1.amazonaws.com/prod
+REACT_APP_USER_POOL_ID=us-east-1_xxxxx
+REACT_APP_USER_POOL_CLIENT_ID=xxxxx
+EOF
+
+# 4. Test development server
+npm start
+
+# 5. Build for production
+npm run build
+
+# 6. Deploy to S3 (get bucket name from CDK outputs)
+aws s3 sync build/ s3://e-com67-frontend-YOUR-ACCOUNT-ID --delete
+```
+
+### Complete Deployment Workflow
+
+```bash
+#!/bin/bash
+
+# Backend deployment
+cd backend
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+cdk bootstrap aws://YOUR_ACCOUNT_ID/us-east-1
+cdk deploy --require-approval never
+
+# Save outputs
+aws cloudformation describe-stacks \
+    --stack-name e-com67Stack \
+    --query "Stacks[0].Outputs" > outputs.json
+
+# Extract values
+ENDPOINT=$(jq -r '.[] | select(.OutputKey=="ApiEndpoint") | .OutputValue' outputs.json)
+USER_POOL=$(jq -r '.[] | select(.OutputKey=="UserPoolId") | .OutputValue' outputs.json)
+CLIENT_ID=$(jq -r '.[] | select(.OutputKey=="UserPoolClientId") | .OutputValue' outputs.json)
+
+# Frontend deployment
+cd ../frontend
+cat > .env.local << EOF
+REACT_APP_API_ENDPOINT=$ENDPOINT
+REACT_APP_USER_POOL_ID=$USER_POOL
+REACT_APP_USER_POOL_CLIENT_ID=$CLIENT_ID
+EOF
+
 npm install
 npm run build
-aws s3 sync build/ s3://your-frontend-bucket
+
+# Deploy to S3
+BUCKET=$(jq -r '.[] | select(.OutputKey=="FrontendBucketName") | .OutputValue' ../backend/outputs.json)
+aws s3 sync build/ s3://$BUCKET --delete
+
+echo "Deployment complete!"
+echo "Frontend: https://$BUCKET.s3.us-east-1.amazonaws.com"
 ```
 
 ---
@@ -921,15 +1469,56 @@ aws s3 sync build/ s3://your-frontend-bucket
 3. **Lambda**: Set appropriate memory/timeout to avoid over-provisioning
 4. **S3**: Enable lifecycle policies to archive old reports
 5. **CloudWatch**: Set log retention to 7 days for dev environment
+6. **API Gateway**: Monitor usage; throttle if needed
+7. **Cognito**: Use free tier; upgrade only if needed
 
 ---
 
 ## Next Steps
 
-1. Start with Phase 1 (Foundation) - DynamoDB, Cognito, basic Lambda
-2. Test each service individually before integration
-3. Document API endpoints as you build
-4. Create architecture diagram using draw.io or Lucidchart
+1. **Phase 1 - Foundation**
+   - Deploy DynamoDB tables
+   - Create Cognito User Pool
+   - Setup API Gateway and basic Lambda functions
+
+2. **Phase 2 - Core Features**
+   - Implement Product CRUD operations
+   - Build Cart functionality
+   - Create Order processing workflow
+
+3. **Phase 3 - Advanced Features**
+   - Add payment processing (Stripe)
+   - Implement OpenSearch for product search
+   - Add email notifications (SES)
+
+4. **Phase 4 - AI & Polish**
+   - Add Bedrock chat integration
+   - Implement WebSocket for real-time chat
+   - Setup monitoring and alarms
+
+5. **Phase 5 - Production Readiness**
+   - Set up CI/CD pipeline (CodePipeline + CodeBuild)
+   - Add comprehensive testing
+   - Configure auto-scaling policies
+   - Setup CDN for frontend (CloudFront)
+
+---
+
+## Monorepo Structure
+
+This project uses a monorepo structure for easier management:
+
+```
+e-com67/
+├── backend/              # AWS CDK infrastructure
+├── frontend/             # React application
+├── shared/               # Shared code and constants
+├── docs/                 # Documentation
+├── README.md             # Project overview
+└── .gitignore           # Git ignore rules
+```
+
+Each directory can be developed and tested independently while sharing common utilities through the `/shared` folder.
 5. Implement CI/CD last (CodePipeline + CodeBuild)
 
 Good luck with your AWS training project! 🚀
