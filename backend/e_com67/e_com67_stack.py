@@ -79,7 +79,9 @@ class ECom67Stack(Stack):
             billing_mode=dynamodb.BillingMode.PAY_PER_REQUEST,
             removal_policy=RemovalPolicy.DESTROY,  # For dev only
             stream=dynamodb.StreamViewType.NEW_AND_OLD_IMAGES,
-            table_name="e-com67-users"
+            table_name="e-com67-users",
+            point_in_time_recovery=True,
+            contributor_insights_enabled=True  # Enable X-Ray tracing
         )
         
         # Products Table with GSI
@@ -92,7 +94,9 @@ class ECom67Stack(Stack):
             billing_mode=dynamodb.BillingMode.PAY_PER_REQUEST,
             removal_policy=RemovalPolicy.DESTROY,
             stream=dynamodb.StreamViewType.NEW_AND_OLD_IMAGES,
-            table_name="e-com67-products"
+            table_name="e-com67-products",
+            point_in_time_recovery=True,
+            contributor_insights_enabled=True  # Enable X-Ray tracing
         )
         
         # Add GSI for category-based queries
@@ -118,7 +122,9 @@ class ECom67Stack(Stack):
             ),
             billing_mode=dynamodb.BillingMode.PAY_PER_REQUEST,
             removal_policy=RemovalPolicy.DESTROY,
-            table_name="e-com67-orders"
+            table_name="e-com67-orders",
+            point_in_time_recovery=True,
+            contributor_insights_enabled=True  # Enable X-Ray tracing
         )
         
         # GSI for querying user's orders sorted by timestamp
@@ -148,7 +154,9 @@ class ECom67Stack(Stack):
             ),
             billing_mode=dynamodb.BillingMode.PAY_PER_REQUEST,
             removal_policy=RemovalPolicy.DESTROY,
-            table_name="e-com67-cart"
+            table_name="e-com67-cart",
+            point_in_time_recovery=True,
+            contributor_insights_enabled=True  # Enable X-Ray tracing
         )
         
         # ChatHistory Table
@@ -164,7 +172,9 @@ class ECom67Stack(Stack):
             ),
             billing_mode=dynamodb.BillingMode.PAY_PER_REQUEST,
             removal_policy=RemovalPolicy.DESTROY,
-            table_name="e-com67-chat-history"
+            table_name="e-com67-chat-history",
+            point_in_time_recovery=True,
+            contributor_insights_enabled=True  # Enable X-Ray tracing
         )
 
     def create_cognito(self):
@@ -229,7 +239,8 @@ class ECom67Stack(Stack):
                     "PRODUCTS_TABLE": self.products_table.table_name,
                 },
                 timeout=Duration.seconds(30),
-                memory_size=512
+                memory_size=512,
+                tracing=lambda_.Tracing.ACTIVE  # Enable X-Ray Active tracing
             )
             self.products_table.grant_read_write_data(self.product_crud_fn)
         else:
@@ -247,7 +258,8 @@ class ECom67Stack(Stack):
                     "CART_TABLE": self.cart_table.table_name,
                     "PRODUCTS_TABLE": self.products_table.table_name
                 },
-                timeout=Duration.seconds(10)
+                timeout=Duration.seconds(10),
+                tracing=lambda_.Tracing.ACTIVE  # Enable X-Ray Active tracing
             )
             self.cart_table.grant_read_write_data(self.cart_fn)
             self.products_table.grant_read_data(self.cart_fn)
@@ -265,7 +277,8 @@ class ECom67Stack(Stack):
                 environment={
                     "ORDERS_TABLE": self.orders_table.table_name
                 },
-                timeout=Duration.seconds(30)
+                timeout=Duration.seconds(30),
+                tracing=lambda_.Tracing.ACTIVE  # Enable X-Ray Active tracing
             )
             self.orders_table.grant_read_write_data(self.payment_fn)
         else:
@@ -284,7 +297,8 @@ class ECom67Stack(Stack):
                     "CART_TABLE": self.cart_table.table_name,
                     "PRODUCTS_TABLE": self.products_table.table_name,
                 },
-                timeout=Duration.seconds(60)
+                timeout=Duration.seconds(60),
+                tracing=lambda_.Tracing.ACTIVE  # Enable X-Ray Active tracing
             )
             self.orders_table.grant_read_write_data(self.order_processor_fn)
             self.cart_table.grant_read_write_data(self.order_processor_fn)
@@ -311,6 +325,9 @@ class ECom67Stack(Stack):
             default_cors_preflight_options=apigw.CorsOptions(
                 allow_origins=apigw.Cors.ALL_ORIGINS,
                 allow_methods=apigw.Cors.ALL_METHODS
+            ),
+            deploy_options=apigw.StageOptions(
+                tracing_enabled=True  # Enable X-Ray tracing for API Gateway
             )
         )
         
@@ -395,6 +412,10 @@ class ECom67Stack(Stack):
             )
         )
         
+        # Enable X-Ray tracing for SQS (via CFN escape hatch)
+        cfn_queue = self.order_queue.node.default_child
+        cfn_queue.add_property_override("SqsManagedSseEnabled", True)
+        
         # Connect Lambda to SQS if order processor exists
         if self.order_processor_fn:
             self.order_processor_fn.add_event_source(
@@ -424,7 +445,8 @@ class ECom67Stack(Stack):
             self, "CheckoutStateMachine",
             state_machine_name="e-com67-checkout",
             definition=definition,
-            timeout=Duration.minutes(5)
+            timeout=Duration.minutes(5),
+            tracing_enabled=True  # Enable X-Ray tracing for Step Functions
         )
 
     def create_s3_buckets(self):

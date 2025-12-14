@@ -2,3 +2,6 @@ aws-cdk-lib==2.215.0
 constructs>=10.0.0,<11.0.0
 
 aws-cdk.aws-lambda-python-alpha==2.120.0a0
+
+# X-Ray SDK for AWS (for Lambda instrumentation)
+aws-xray-sdk==2.12.1
