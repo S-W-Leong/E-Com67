@@ -4,31 +4,50 @@ import boto3
 from decimal import Decimal
 from typing import Dict, Any
 
+# AWS Lambda Powertools
+from aws_lambda_powertools import Logger, Tracer
+from aws_lambda_powertools.utilities.typing import LambdaContext
+
+# Initialize Powertools
+logger = Logger()
+tracer = Tracer()
+
 orders_table = boto3.resource('dynamodb').Table(os.environ.get('ORDERS_TABLE', 'e-com67-orders'))
 
-def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
+@tracer.capture_lambda_handler
+@logger.inject_lambda_context
+def handler(event: Dict[str, Any], context: LambdaContext) -> Dict[str, Any]:
     """
     Payment handler - validate and process payments
     Note: In production, integrate with Stripe API
     """
     try:
         body = json.loads(event['body'])
-        
+
+        logger.info("Processing payment request", extra={
+            "order_id": body.get('orderId'),
+            "user_id": body.get('userId'),
+            "amount": body.get('amount')
+        })
+
         # Validate payment data
         if not all(key in body for key in ['orderId', 'userId', 'amount', 'paymentToken']):
+            logger.warning("Missing required payment fields", extra={"body_keys": list(body.keys())})
             return error_response(400, "Missing required payment fields")
         
         # TODO: Process payment with Stripe
         # For now, simulate successful payment
-        
+
+        logger.info("Payment processed successfully", extra={"order_id": body['orderId']})
+
         return success_response({
             'orderId': body['orderId'],
             'status': 'PAID',
             'message': 'Payment processed successfully'
         })
-    
+
     except Exception as e:
-        print(f"Payment error: {str(e)}")
+        logger.exception("Payment processing failed")
         return error_response(500, "Payment processing failed")
 
 def success_response(data: Any, status_code: int = 200) -> Dict:

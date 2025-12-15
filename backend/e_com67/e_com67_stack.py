@@ -209,7 +209,26 @@ class ECom67Stack(Stack):
     def create_lambda_layers(self):
         """Create Lambda layers for shared code and dependencies"""
         lambda_dir = os.path.join(os.path.dirname(__file__), "..", "..", "backend", "lambda")
-        
+
+        # AWS Lambda Powertools Layer
+        # Option 1: Use custom-built layer (recommended for reproducible builds)
+        powertools_layer_path = os.path.join(lambda_dir, "layers", "powertools")
+        if os.path.exists(os.path.join(powertools_layer_path, "python")):
+            # Custom layer built locally - more control over versions
+            self.powertools_layer = lambda_.LayerVersion(
+                self, "PowertoolsLayer",
+                code=lambda_.Code.from_asset(powertools_layer_path),
+                compatible_runtimes=[lambda_.Runtime.PYTHON_3_11],
+                description="AWS Lambda Powertools for Python"
+            )
+        else:
+            # Option 2: Use AWS-managed layer (easier but version may vary by region)
+            # Get latest version from: https://docs.powertools.aws.dev/lambda/python/latest/#lambda-layer
+            self.powertools_layer = lambda_.LayerVersion.from_layer_version_arn(
+                self, "PowertoolsLayer",
+                layer_version_arn=f"arn:aws:lambda:{self.region}:017000801446:layer:AWSLambdaPowertoolsPythonV2:59"
+            )
+
         # Common utilities layer - create if it doesn't exist
         common_layer_path = os.path.join(lambda_dir, "layers", "common_utils")
         if os.path.exists(common_layer_path):
@@ -237,10 +256,14 @@ class ECom67Stack(Stack):
                 code=lambda_.Code.from_asset(product_fn_path),
                 environment={
                     "PRODUCTS_TABLE": self.products_table.table_name,
+                    "POWERTOOLS_SERVICE_NAME": "products",
+                    "POWERTOOLS_METRICS_NAMESPACE": "ECom67",
+                    "LOG_LEVEL": "INFO"
                 },
                 timeout=Duration.seconds(30),
                 memory_size=512,
-                tracing=lambda_.Tracing.ACTIVE  # Enable X-Ray Active tracing
+                tracing=lambda_.Tracing.ACTIVE,  # Enable X-Ray Active tracing
+                layers=[self.powertools_layer]
             )
             self.products_table.grant_read_write_data(self.product_crud_fn)
         else:
@@ -256,10 +279,14 @@ class ECom67Stack(Stack):
                 code=lambda_.Code.from_asset(cart_fn_path),
                 environment={
                     "CART_TABLE": self.cart_table.table_name,
-                    "PRODUCTS_TABLE": self.products_table.table_name
+                    "PRODUCTS_TABLE": self.products_table.table_name,
+                    "POWERTOOLS_SERVICE_NAME": "cart",
+                    "POWERTOOLS_METRICS_NAMESPACE": "ECom67",
+                    "LOG_LEVEL": "INFO"
                 },
                 timeout=Duration.seconds(10),
-                tracing=lambda_.Tracing.ACTIVE  # Enable X-Ray Active tracing
+                tracing=lambda_.Tracing.ACTIVE,  # Enable X-Ray Active tracing
+                layers=[self.powertools_layer]
             )
             self.cart_table.grant_read_write_data(self.cart_fn)
             self.products_table.grant_read_data(self.cart_fn)
@@ -275,10 +302,14 @@ class ECom67Stack(Stack):
                 handler="index.handler",
                 code=lambda_.Code.from_asset(payment_fn_path),
                 environment={
-                    "ORDERS_TABLE": self.orders_table.table_name
+                    "ORDERS_TABLE": self.orders_table.table_name,
+                    "POWERTOOLS_SERVICE_NAME": "payment",
+                    "POWERTOOLS_METRICS_NAMESPACE": "ECom67",
+                    "LOG_LEVEL": "INFO"
                 },
                 timeout=Duration.seconds(30),
-                tracing=lambda_.Tracing.ACTIVE  # Enable X-Ray Active tracing
+                tracing=lambda_.Tracing.ACTIVE,  # Enable X-Ray Active tracing
+                layers=[self.powertools_layer]
             )
             self.orders_table.grant_read_write_data(self.payment_fn)
         else:
@@ -296,9 +327,13 @@ class ECom67Stack(Stack):
                     "ORDERS_TABLE": self.orders_table.table_name,
                     "CART_TABLE": self.cart_table.table_name,
                     "PRODUCTS_TABLE": self.products_table.table_name,
+                    "POWERTOOLS_SERVICE_NAME": "order-processor",
+                    "POWERTOOLS_METRICS_NAMESPACE": "ECom67",
+                    "LOG_LEVEL": "INFO"
                 },
                 timeout=Duration.seconds(60),
-                tracing=lambda_.Tracing.ACTIVE  # Enable X-Ray Active tracing
+                tracing=lambda_.Tracing.ACTIVE,  # Enable X-Ray Active tracing
+                layers=[self.powertools_layer]
             )
             self.orders_table.grant_read_write_data(self.order_processor_fn)
             self.cart_table.grant_read_write_data(self.order_processor_fn)

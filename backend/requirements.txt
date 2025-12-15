@@ -6,3 +6,7 @@ aws-cdk.aws-lambda-python-alpha==2.120.0a0
 # X-Ray SDK for AWS (for Lambda instrumentation)
 aws-xray-sdk==2.12.1
 
+# For testing scripts
+boto3==1.35.0
+requests==2.32.0
+
