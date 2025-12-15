@@ -1,3 +1,8 @@
-from .e_com67_stack import ECom67Stack
+from .stacks import DataStack, ComputeStack, ApiStack, InfraStack
 
-__all__ = ["ECom67Stack"]
+__all__ = [
+    "DataStack",
+    "ComputeStack",
+    "ApiStack",
+    "InfraStack",
+]
