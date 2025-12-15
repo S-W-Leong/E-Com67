@@ -90,7 +90,14 @@ class ApiStack(Stack):
             description="Serverless e-com67 API",
             default_cors_preflight_options=apigw.CorsOptions(
                 allow_origins=apigw.Cors.ALL_ORIGINS,
-                allow_methods=apigw.Cors.ALL_METHODS
+                allow_methods=apigw.Cors.ALL_METHODS,
+                allow_headers=[
+                    'Authorization',
+                    'Content-Type',
+                    'X-Amz-Date',
+                    'X-Api-Key',
+                    'X-Amz-Security-Token'
+                ]
             ),
             deploy_options=apigw.StageOptions(
                 tracing_enabled=True  # Enable X-Ray tracing for API Gateway
@@ -132,6 +139,11 @@ class ApiStack(Stack):
         )
         cart.add_method(
             "POST",
+            apigw.LambdaIntegration(self.cart_fn),
+            authorizer=authorizer
+        )
+        cart.add_method(
+            "DELETE",
             apigw.LambdaIntegration(self.cart_fn),
             authorizer=authorizer
         )

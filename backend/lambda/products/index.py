@@ -85,7 +85,8 @@ def create_product(data: Dict) -> Dict:
     import uuid
 
     product_id = str(uuid.uuid4())
-    logger.info("Creating product", extra={"product_id": product_id, "name": data.get('name')})
+    # Avoid using `name` as a key in `extra` because it conflicts with LogRecord.name
+    logger.info("Creating product", extra={"product_id": product_id, "product_name": data.get('name')})
     item = {
         'productId': product_id,
         'name': data['name'],
@@ -142,13 +143,23 @@ def delete_product(product_id: str) -> Dict:
 def success_response(data: Any, status_code: int = 200) -> Dict:
     return {
         'statusCode': status_code,
-        'headers': {'Content-Type': 'application/json'},
+        'headers': {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Headers': 'Authorization,Content-Type,X-Amz-Date,X-Api-Key,X-Amz-Security-Token',
+            'Access-Control-Allow-Methods': 'OPTIONS,GET,PUT,POST,DELETE'
+        },
         'body': json.dumps(data, default=str)
     }
 
 def error_response(status_code: int, message: str) -> Dict:
     return {
         'statusCode': status_code,
-        'headers': {'Content-Type': 'application/json'},
+        'headers': {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Headers': 'Authorization,Content-Type,X-Amz-Date,X-Api-Key,X-Amz-Security-Token',
+            'Access-Control-Allow-Methods': 'OPTIONS,GET,PUT,POST,DELETE'
+        },
         'body': json.dumps({'error': message})
     }

@@ -118,13 +118,23 @@ def remove_from_cart(user_id: str, data: Dict) -> Dict:
 def success_response(data: Any, status_code: int = 200) -> Dict:
     return {
         'statusCode': status_code,
-        'headers': {'Content-Type': 'application/json'},
+        'headers': {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Headers': 'Authorization,Content-Type,X-Amz-Date,X-Api-Key,X-Amz-Security-Token',
+            'Access-Control-Allow-Methods': 'OPTIONS,GET,PUT,POST,DELETE'
+        },
         'body': json.dumps(data, default=str)
     }
 
 def error_response(status_code: int, message: str) -> Dict:
     return {
         'statusCode': status_code,
-        'headers': {'Content-Type': 'application/json'},
+        'headers': {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Headers': 'Authorization,Content-Type,X-Amz-Date,X-Api-Key,X-Amz-Security-Token',
+            'Access-Control-Allow-Methods': 'OPTIONS,GET,PUT,POST,DELETE'
+        },
         'body': json.dumps({'error': message})
     }

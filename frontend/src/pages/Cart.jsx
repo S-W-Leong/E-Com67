@@ -18,7 +18,8 @@ function Cart() {
     setLoading(true);
     try {
       const data = await cartAPI.get();
-      setCartItems(Array.isArray(data) ? data : []);
+      // Lambda returns { items: [...], total: number }
+      setCartItems(Array.isArray(data.items) ? data.items : []);
     } catch (error) {
       console.error('Failed to load cart:', error);
       toast.error('Failed to load cart');

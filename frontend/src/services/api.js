@@ -103,7 +103,7 @@ export const cartAPI = {
   },
 
   remove: async (productId) => {
-    const response = await apiClient.delete('/cart', { params: { productId } });
+    const response = await apiClient.delete('/cart', { data: { productId } });
     return response.data;
   },
 
