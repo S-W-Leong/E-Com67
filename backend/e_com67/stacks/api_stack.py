@@ -41,7 +41,6 @@ class ApiStack(Stack):
 
         # Import Cognito User Pool from DataStack
         user_pool_arn = Fn.import_value("ECom67-UserPoolArn")
-        user_pool_id = Fn.import_value("ECom67-UserPoolId")
 
         self.user_pool = cognito.UserPool.from_user_pool_arn(
             self, "ImportedUserPool",
@@ -49,33 +48,31 @@ class ApiStack(Stack):
         )
 
         # Import Lambda functions from ComputeStack
-        # Only import if they exist (check the pattern used in original stack)
-        try:
-            product_fn_arn = Fn.import_value("ECom67-ProductFunction")
-            self.product_crud_fn = lambda_.Function.from_function_arn(
-                self, "ImportedProductFunction",
-                function_arn=product_fn_arn
-            )
-        except:
-            self.product_crud_fn = None
+        # Note: We import using from_function_attributes instead of from_function_arn
+        # to allow API Gateway to add invoke permissions
+        product_fn_arn = Fn.import_value("ECom67-ProductFunction")
+        product_fn_name = Fn.import_value("ECom67-ProductFunctionName")
+        self.product_crud_fn = lambda_.Function.from_function_attributes(
+            self, "ImportedProductFunction",
+            function_arn=product_fn_arn,
+            same_environment=True  # Allow permission grants
+        )
 
-        try:
-            cart_fn_arn = Fn.import_value("ECom67-CartFunction")
-            self.cart_fn = lambda_.Function.from_function_arn(
-                self, "ImportedCartFunction",
-                function_arn=cart_fn_arn
-            )
-        except:
-            self.cart_fn = None
+        cart_fn_arn = Fn.import_value("ECom67-CartFunction")
+        cart_fn_name = Fn.import_value("ECom67-CartFunctionName")
+        self.cart_fn = lambda_.Function.from_function_attributes(
+            self, "ImportedCartFunction",
+            function_arn=cart_fn_arn,
+            same_environment=True  # Allow permission grants
+        )
 
-        try:
-            payment_fn_arn = Fn.import_value("ECom67-PaymentFunction")
-            self.payment_fn = lambda_.Function.from_function_arn(
-                self, "ImportedPaymentFunction",
-                function_arn=payment_fn_arn
-            )
-        except:
-            self.payment_fn = None
+        payment_fn_arn = Fn.import_value("ECom67-PaymentFunction")
+        payment_fn_name = Fn.import_value("ECom67-PaymentFunctionName")
+        self.payment_fn = lambda_.Function.from_function_attributes(
+            self, "ImportedPaymentFunction",
+            function_arn=payment_fn_arn,
+            same_environment=True  # Allow permission grants
+        )
 
     def create_api_gateway(self):
         """Create REST API with Cognito authorization"""
@@ -101,45 +98,43 @@ class ApiStack(Stack):
         )
 
         # Products endpoints
-        if self.product_crud_fn:
-            products = self.api.root.add_resource("products")
-            products.add_method(
-                "GET",
-                apigw.LambdaIntegration(self.product_crud_fn)
-            )
-            products.add_method(
-                "POST",
-                apigw.LambdaIntegration(self.product_crud_fn),
-                authorizer=authorizer,
-                authorization_type=apigw.AuthorizationType.COGNITO
-            )
+        products = self.api.root.add_resource("products")
+        products.add_method(
+            "GET",
+            apigw.LambdaIntegration(self.product_crud_fn)
+        )
+        products.add_method(
+            "POST",
+            apigw.LambdaIntegration(self.product_crud_fn),
+            authorizer=authorizer,
+            authorization_type=apigw.AuthorizationType.COGNITO
+        )
 
-            product = products.add_resource("{productId}")
-            product.add_method("GET", apigw.LambdaIntegration(self.product_crud_fn))
-            product.add_method(
-                "PUT",
-                apigw.LambdaIntegration(self.product_crud_fn),
-                authorizer=authorizer
-            )
-            product.add_method(
-                "DELETE",
-                apigw.LambdaIntegration(self.product_crud_fn),
-                authorizer=authorizer
-            )
+        product = products.add_resource("{productId}")
+        product.add_method("GET", apigw.LambdaIntegration(self.product_crud_fn))
+        product.add_method(
+            "PUT",
+            apigw.LambdaIntegration(self.product_crud_fn),
+            authorizer=authorizer
+        )
+        product.add_method(
+            "DELETE",
+            apigw.LambdaIntegration(self.product_crud_fn),
+            authorizer=authorizer
+        )
 
         # Cart endpoints
-        if self.cart_fn:
-            cart = self.api.root.add_resource("cart")
-            cart.add_method(
-                "GET",
-                apigw.LambdaIntegration(self.cart_fn),
-                authorizer=authorizer
-            )
-            cart.add_method(
-                "POST",
-                apigw.LambdaIntegration(self.cart_fn),
-                authorizer=authorizer
-            )
+        cart = self.api.root.add_resource("cart")
+        cart.add_method(
+            "GET",
+            apigw.LambdaIntegration(self.cart_fn),
+            authorizer=authorizer
+        )
+        cart.add_method(
+            "POST",
+            apigw.LambdaIntegration(self.cart_fn),
+            authorizer=authorizer
+        )
 
     def create_outputs(self):
         """Create CloudFormation outputs for cross-stack references"""

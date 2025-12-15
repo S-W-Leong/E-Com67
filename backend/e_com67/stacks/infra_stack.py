@@ -56,23 +56,9 @@ class InfraStack(Stack):
         """Import resources from ComputeStack"""
 
         # Import Lambda functions for integrations
-        try:
-            order_processor_arn = Fn.import_value("ECom67-OrderProcessor")
-            self.order_processor_fn = lambda_.Function.from_function_arn(
-                self, "ImportedOrderProcessor",
-                function_arn=order_processor_arn
-            )
-        except:
-            self.order_processor_fn = None
-
-        try:
-            payment_fn_arn = Fn.import_value("ECom67-PaymentFunction")
-            self.payment_fn = lambda_.Function.from_function_arn(
-                self, "ImportedPaymentFunction",
-                function_arn=payment_fn_arn
-            )
-        except:
-            self.payment_fn = None
+        # These will be None if ComputeStack didn't create them
+        self.order_processor_fn = None
+        self.payment_fn = None
 
     def create_opensearch(self):
         """Create OpenSearch domain for product search"""
@@ -118,7 +104,7 @@ class InfraStack(Stack):
         cfn_queue = self.order_queue.node.default_child
         cfn_queue.add_property_override("SqsManagedSseEnabled", True)
 
-        # Connect Lambda to SQS if order processor exists
+        # Connect Lambda to SQS (only if order processor function exists)
         if self.order_processor_fn:
             self.order_processor_fn.add_event_source(
                 lambda_event_sources.SqsEventSource(self.order_queue, batch_size=10)
@@ -188,8 +174,8 @@ class InfraStack(Stack):
 
     def create_monitoring(self):
         """Create CloudWatch alarms and dashboards"""
+        # Lambda Error Alarm (only if payment function exists)
         if self.payment_fn:
-            # Lambda Error Alarm
             self.payment_fn.metric_errors().create_alarm(
                 self, "PaymentErrorAlarm",
                 threshold=5,

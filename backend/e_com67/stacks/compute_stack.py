@@ -71,7 +71,7 @@ class ComputeStack(Stack):
 
     def create_lambda_layers(self):
         """Create Lambda layers for shared code and dependencies"""
-        lambda_dir = os.path.join(os.path.dirname(__file__), "..", "..", "..", "lambda")
+        lambda_dir = os.path.join(os.path.dirname(__file__), "..", "..", "lambda")
 
         # AWS Lambda Powertools Layer
         powertools_layer_path = os.path.join(lambda_dir, "layers", "powertools")
@@ -104,7 +104,7 @@ class ComputeStack(Stack):
 
     def create_lambda_functions(self):
         """Create Lambda functions for business logic"""
-        lambda_dir = os.path.join(os.path.dirname(__file__), "..", "..", "..", "lambda")
+        lambda_dir = os.path.join(os.path.dirname(__file__), "..", "..", "lambda")
 
         # Product CRUD Function
         product_fn_path = os.path.join(lambda_dir, "products")
