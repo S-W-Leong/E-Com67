@@ -32,21 +32,6 @@ class DataStack(Stack):
     def create_dynamodb_tables(self):
         """Create all DynamoDB tables for the e-commerce platform"""
 
-        # Users Table
-        self.users_table = dynamodb.Table(
-            self, "UsersTable",
-            partition_key=dynamodb.Attribute(
-                name="userId",
-                type=dynamodb.AttributeType.STRING
-            ),
-            billing_mode=dynamodb.BillingMode.PAY_PER_REQUEST,
-            removal_policy=RemovalPolicy.DESTROY,  # For dev only
-            stream=dynamodb.StreamViewType.NEW_AND_OLD_IMAGES,
-            table_name="e-com67-users",
-            point_in_time_recovery=True,
-            contributor_insights_enabled=True  # Enable X-Ray tracing
-        )
-
         # Products Table with GSI
         self.products_table = dynamodb.Table(
             self, "ProductsTable",
@@ -174,13 +159,6 @@ class DataStack(Stack):
 
         # DynamoDB Table Exports - Names
         CfnOutput(
-            self, "UsersTableName",
-            value=self.users_table.table_name,
-            description="Users DynamoDB table name",
-            export_name="ECom67-UsersTable"
-        )
-
-        CfnOutput(
             self, "ProductsTableName",
             value=self.products_table.table_name,
             description="Products DynamoDB table name",
@@ -209,13 +187,6 @@ class DataStack(Stack):
         )
 
         # DynamoDB Table Exports - ARNs (for IAM permissions)
-        CfnOutput(
-            self, "UsersTableArn",
-            value=self.users_table.table_arn,
-            description="Users table ARN",
-            export_name="ECom67-UsersTableArn"
-        )
-
         CfnOutput(
             self, "ProductsTableArn",
             value=self.products_table.table_arn,

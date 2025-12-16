@@ -5,22 +5,19 @@ import SearchBar from '../components/SearchBar';
 import LoadingSpinner from '../components/LoadingSpinner';
 import toast from 'react-hot-toast';
 
-const CATEGORIES = ['Electronics', 'Clothing', 'Books', 'Home', 'Sports', 'Beauty'];
-
 function Products() {
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [selectedCategory, setSelectedCategory] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
 
   useEffect(() => {
     loadProducts();
-  }, [selectedCategory]);
+  }, []);
 
   const loadProducts = async () => {
     setLoading(true);
     try {
-      const data = await productsAPI.getAll(selectedCategory || null);
+      const data = await productsAPI.getAll();
       setProducts(Array.isArray(data) ? data : []);
     } catch (error) {
       console.error('Failed to load products:', error);
@@ -52,11 +49,6 @@ function Products() {
     }
   };
 
-  const handleCategoryChange = (category) => {
-    setSelectedCategory(category);
-    setSearchQuery('');
-  };
-
   return (
     <div className="page-container">
       <div className="mb-8">
@@ -65,36 +57,6 @@ function Products() {
       </div>
 
       <SearchBar onSearch={handleSearch} />
-
-      {/* Category Filter */}
-      <div className="mb-8">
-        <h2 className="text-lg font-semibold mb-4">Categories</h2>
-        <div className="flex flex-wrap gap-3">
-          <button
-            onClick={() => handleCategoryChange('')}
-            className={`px-6 py-2 rounded-full font-medium transition-all ${
-              !selectedCategory
-                ? 'bg-blue-600 text-white shadow-md'
-                : 'bg-white text-gray-700 hover:bg-gray-100 border border-gray-300'
-            }`}
-          >
-            All Products
-          </button>
-          {CATEGORIES.map((category) => (
-            <button
-              key={category}
-              onClick={() => handleCategoryChange(category)}
-              className={`px-6 py-2 rounded-full font-medium transition-all ${
-                selectedCategory === category
-                  ? 'bg-blue-600 text-white shadow-md'
-                  : 'bg-white text-gray-700 hover:bg-gray-100 border border-gray-300'
-              }`}
-            >
-              {category}
-            </button>
-          ))}
-        </div>
-      </div>
 
       {/* Products Grid */}
       {loading ? (
@@ -118,7 +80,6 @@ function Products() {
         <>
           <div className="mb-4 text-gray-600">
             Showing {products.length} product{products.length !== 1 ? 's' : ''}
-            {selectedCategory && ` in ${selectedCategory}`}
             {searchQuery && ` for "${searchQuery}"`}
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">

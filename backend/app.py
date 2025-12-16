@@ -18,13 +18,14 @@ data_stack = DataStack(app, "ECom67-DataStack", env=env)
 compute_stack = ComputeStack(app, "ECom67-ComputeStack", env=env)
 compute_stack.add_dependency(data_stack)
 
-# ApiStack contains API Gateway - depends on ComputeStack and DataStack
-api_stack = ApiStack(app, "ECom67-ApiStack", env=env)
-api_stack.add_dependency(compute_stack)
-api_stack.add_dependency(data_stack)
-
 # InfraStack contains supporting services - depends on ComputeStack
 infra_stack = InfraStack(app, "ECom67-InfraStack", env=env)
 infra_stack.add_dependency(compute_stack)
+
+# ApiStack contains API Gateway - depends on ComputeStack, DataStack, and InfraStack
+api_stack = ApiStack(app, "ECom67-ApiStack", env=env)
+api_stack.add_dependency(compute_stack)
+api_stack.add_dependency(data_stack)
+api_stack.add_dependency(infra_stack)
 
 app.synth()

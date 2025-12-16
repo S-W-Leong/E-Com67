@@ -7,6 +7,7 @@ from aws_cdk import (
     aws_s3 as s3,
     aws_iam as iam,
     aws_stepfunctions as sfn,
+    aws_stepfunctions_tasks as tasks,
     aws_events as events,
     aws_lambda as lambda_,
     aws_lambda_event_sources as lambda_event_sources,
@@ -57,8 +58,35 @@ class InfraStack(Stack):
 
         # Import Lambda functions for integrations
         # These will be None if ComputeStack didn't create them
-        self.order_processor_fn = None
-        self.payment_fn = None
+        try:
+            self.payment_fn = lambda_.Function.from_function_arn(
+                self, "PaymentFunctionImport",
+                function_arn=Fn.import_value("ECom67-PaymentFunction")
+            )
+        except Exception:
+            self.payment_fn = None
+
+        try:
+            self.order_processor_fn = lambda_.Function.from_function_arn(
+                self, "OrderProcessorImport",
+                function_arn=Fn.import_value("ECom67-OrderProcessor")
+            )
+            # Import the role separately for granting permissions
+            self.order_processor_role = iam.Role.from_role_arn(
+                self, "OrderProcessorRoleImport",
+                role_arn=Fn.import_value("ECom67-OrderProcessorRoleArn")
+            )
+        except Exception:
+            self.order_processor_fn = None
+            self.order_processor_role = None
+
+        try:
+            self.cart_fn = lambda_.Function.from_function_arn(
+                self, "CartFunctionImport",
+                function_arn=Fn.import_value("ECom67-CartFunction")
+            )
+        except Exception:
+            self.cart_fn = None
 
     def create_opensearch(self):
         """Create OpenSearch domain for product search"""
@@ -105,7 +133,11 @@ class InfraStack(Stack):
         cfn_queue.add_property_override("SqsManagedSseEnabled", True)
 
         # Connect Lambda to SQS (only if order processor function exists)
-        if self.order_processor_fn:
+        if self.order_processor_fn and self.order_processor_role:
+            # Grant SQS permissions to Lambda's execution role
+            self.order_queue.grant_consume_messages(self.order_processor_role)
+            
+            # Add SQS event source mapping
             self.order_processor_fn.add_event_source(
                 lambda_event_sources.SqsEventSource(self.order_queue, batch_size=10)
             )
@@ -119,12 +151,106 @@ class InfraStack(Stack):
 
     def create_step_functions(self):
         """Create Step Functions for checkout workflow"""
-        # For now, create a simple state machine
-        # In a real scenario, this would include validation, payment, and queue tasks
-        definition = sfn.Pass(
-            self, "CheckoutPass",
-            comment="Placeholder for checkout state machine"
-        )
+        
+        # Check if required Lambda functions are available
+        if not self.payment_fn or not self.order_processor_fn:
+            # Fallback to simple pass state if functions not available
+            definition = sfn.Pass(
+                self, "CheckoutPass",
+                comment="Placeholder - Lambda functions not imported"
+            )
+        else:
+            # Define cart validation task (using cart Lambda)
+            # Use payload_response_only=True to get direct Lambda response without Payload wrapper
+            validate_cart = tasks.LambdaInvoke(
+                self, "ValidateCart",
+                lambda_function=self.cart_fn,
+                payload_response_only=True,  # Returns Lambda response directly without Payload wrapper
+                payload=sfn.TaskInput.from_object(
+                    {
+                        "action": "validate",
+                        "userId": sfn.JsonPath.string_at("$.userId"),
+                        "orderId": sfn.JsonPath.string_at("$.orderId"),
+                        "items": sfn.JsonPath.object_at("$.items"),
+                        "totalAmount": sfn.JsonPath.string_at("$.totalAmount"),
+                        "paymentToken": sfn.JsonPath.string_at("$.paymentToken"),
+                        "email": sfn.JsonPath.string_at("$.email")
+                    }
+                )
+            )
+            
+            # Define payment failed handler
+            payment_failed_handler = sfn.Pass(
+                self, "PaymentFailedHandler",
+                comment="Payment processing failed",
+                result=sfn.Result.from_object({
+                    "status": "PAYMENT_FAILED",
+                    "message": "Payment processing failed after retries"
+                }),
+                result_path="$.error"
+            )
+            
+            # Define payment processing task (with retry logic)
+            # Use payload_response_only=True for direct Lambda response
+            process_payment = tasks.LambdaInvoke(
+                self, "ProcessPayment",
+                lambda_function=self.payment_fn,
+                payload_response_only=True,  # Returns Lambda response directly without Payload wrapper
+                payload=sfn.TaskInput.from_object(
+                    {
+                        "orderId": sfn.JsonPath.string_at("$.orderId"),
+                        "userId": sfn.JsonPath.string_at("$.userId"),
+                        "amount": sfn.JsonPath.string_at("$.totalAmount"),
+                        "paymentToken": sfn.JsonPath.string_at("$.paymentToken"),
+                        "items": sfn.JsonPath.object_at("$.items")
+                    }
+                ),
+                retry_on_service_exceptions=True
+            )
+            
+            # Add retry configuration
+            process_payment.add_retry(
+                interval=Duration.seconds(2),
+                max_attempts=3,
+                backoff_rate=2.0
+            )
+            
+            # Add catch for payment failures
+            process_payment.add_catch(
+                payment_failed_handler,
+                errors=["States.ALL"],
+                result_path="$.error"
+            )
+            
+            # Define SQS send task - send successful order to processing queue
+            send_to_queue = tasks.SqsSendMessage(
+                self, "SendToQueue",
+                queue=self.order_queue,
+                message_body=sfn.TaskInput.from_json_path_at("$"),
+                result_path="$.queueResult"
+            )
+            
+            # Define success state
+            success_state = sfn.Succeed(
+                self, "CheckoutSuccess",
+                comment="Order successfully submitted for processing"
+            )
+            
+            # Define failure state
+            failure_state = sfn.Fail(
+                self, "CheckoutFailed",
+                comment="Order checkout failed"
+            )
+            
+            # Chain the tasks together:
+            # 1. Validate cart
+            # 2. Process payment (with retries)
+            # 3. Send to queue
+            # 4. Success
+            definition = validate_cart \
+                .next(process_payment) \
+                .next(send_to_queue) \
+                .next(success_state)
 
         self.checkout_state_machine = sfn.StateMachine(
             self, "CheckoutStateMachine",
@@ -236,5 +362,6 @@ class InfraStack(Stack):
         CfnOutput(
             self, "CheckoutStateMachineArn",
             value=self.checkout_state_machine.state_machine_arn,
-            description="Checkout Step Functions state machine ARN"
+            description="Checkout Step Functions state machine ARN",
+            export_name="ECom67-CheckoutStateMachineArn"
         )

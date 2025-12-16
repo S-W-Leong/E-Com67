@@ -4,6 +4,8 @@ from aws_cdk import (
     aws_cognito as cognito,
     aws_lambda as lambda_,
     aws_apigateway as apigw,
+    aws_iam as iam,
+    aws_stepfunctions as sfn,
 )
 
 
@@ -47,6 +49,9 @@ class ApiStack(Stack):
             user_pool_arn=user_pool_arn
         )
 
+        # Import Step Functions state machine from InfraStack
+        self.checkout_state_machine_arn = Fn.import_value("ECom67-CheckoutStateMachineArn")
+
         # Import Lambda functions from ComputeStack
         # Note: We import using from_function_attributes instead of from_function_arn
         # to allow API Gateway to add invoke permissions
@@ -72,6 +77,15 @@ class ApiStack(Stack):
             self, "ImportedPaymentFunction",
             function_arn=payment_fn_arn,
             same_environment=True  # Allow permission grants
+        )
+
+        # Import Orders function (GET orders)
+        orders_fn_arn = Fn.import_value("ECom67-OrdersFunction")
+        orders_fn_name = Fn.import_value("ECom67-OrdersFunctionName")
+        self.orders_fn = lambda_.Function.from_function_attributes(
+            self, "ImportedOrdersFunction",
+            function_arn=orders_fn_arn,
+            same_environment=True
         )
 
     def create_api_gateway(self):
@@ -146,6 +160,120 @@ class ApiStack(Stack):
             "DELETE",
             apigw.LambdaIntegration(self.cart_fn),
             authorizer=authorizer
+        )
+
+        # Orders endpoint - Direct Step Functions integration
+        orders = self.api.root.add_resource("orders")
+        
+        # Create IAM role for API Gateway to invoke Step Functions
+        sfn_role = iam.Role(
+            self, "ApiGatewayStepFunctionsRole",
+            assumed_by=iam.ServicePrincipal("apigateway.amazonaws.com"),
+            description="Role for API Gateway to invoke Step Functions"
+        )
+        
+        sfn_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["states:StartExecution"],
+                resources=[self.checkout_state_machine_arn]
+            )
+        )
+        
+        # Create Step Functions integration
+        sfn_integration = apigw.AwsIntegration(
+            service="states",
+            action="StartExecution",
+            options=apigw.IntegrationOptions(
+                credentials_role=sfn_role,
+                integration_responses=[
+                    apigw.IntegrationResponse(
+                        status_code="200",
+                        response_parameters={
+                            "method.response.header.Access-Control-Allow-Origin": "'*'",
+                            "method.response.header.Access-Control-Allow-Headers": "'Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token'",
+                            "method.response.header.Access-Control-Allow-Methods": "'OPTIONS,POST'"
+                        },
+                        response_templates={
+                            "application/json": '''
+#set($inputRoot = $input.path('$'))
+{
+  "executionArn": "$inputRoot.executionArn",
+  "startDate": "$inputRoot.startDate",
+  "message": "Order checkout initiated successfully"
+}
+'''
+                        }
+                    ),
+                    apigw.IntegrationResponse(
+                        status_code="400",
+                        selection_pattern="4\\d{2}",
+                        response_parameters={
+                            "method.response.header.Access-Control-Allow-Origin": "'*'"
+                        },
+                        response_templates={
+                            "application/json": '{"error": "Bad request"}'
+                        }
+                    ),
+                    apigw.IntegrationResponse(
+                        status_code="500",
+                        selection_pattern="5\\d{2}",
+                        response_parameters={
+                            "method.response.header.Access-Control-Allow-Origin": "'*'"
+                        },
+                        response_templates={
+                            "application/json": '{"error": "Internal server error"}'
+                        }
+                    )
+                ],
+                request_templates={
+                    "application/json": f'''
+#set($inputRoot = $input.path('$'))
+#set($context.requestOverride.header.X-Amz-Date = $context.requestTime)
+{{
+  "stateMachineArn": "{self.checkout_state_machine_arn}",
+  "input": "$util.escapeJavaScript($input.json('$'))"
+}}
+'''
+                }
+            )
+        )
+        
+        # Add POST method for orders with Step Functions integration
+        orders.add_method(
+            "POST",
+            sfn_integration,
+            authorizer=authorizer,
+            authorization_type=apigw.AuthorizationType.COGNITO,
+            method_responses=[
+                apigw.MethodResponse(
+                    status_code="200",
+                    response_parameters={
+                        "method.response.header.Access-Control-Allow-Origin": True,
+                        "method.response.header.Access-Control-Allow-Headers": True,
+                        "method.response.header.Access-Control-Allow-Methods": True
+                    }
+                ),
+                apigw.MethodResponse(
+                    status_code="400",
+                    response_parameters={
+                        "method.response.header.Access-Control-Allow-Origin": True
+                    }
+                ),
+                apigw.MethodResponse(
+                    status_code="500",
+                    response_parameters={
+                        "method.response.header.Access-Control-Allow-Origin": True
+                    }
+                )
+            ]
+        )
+
+        # Add GET method for retrieving orders
+        orders.add_method(
+            "GET",
+            apigw.LambdaIntegration(self.orders_fn),
+            authorizer=authorizer,
+            authorization_type=apigw.AuthorizationType.COGNITO
         )
 
     def create_outputs(self):

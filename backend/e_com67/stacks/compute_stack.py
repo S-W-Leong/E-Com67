@@ -44,11 +44,6 @@ class ComputeStack(Stack):
 
         # Import DynamoDB tables using from_table_arn for grant_* methods
         # We use table ARN which contains the table name
-        self.users_table = dynamodb.Table.from_table_arn(
-            self, "ImportedUsersTable",
-            table_arn=Fn.import_value("ECom67-UsersTableArn")
-        )
-
         self.products_table = dynamodb.Table.from_table_arn(
             self, "ImportedProductsTable",
             table_arn=Fn.import_value("ECom67-ProductsTableArn")
@@ -194,6 +189,27 @@ class ComputeStack(Stack):
         else:
             self.order_processor_fn = None
 
+        # Orders Function (GET orders for user)
+        orders_fn_path = os.path.join(lambda_dir, "orders")
+        if os.path.exists(orders_fn_path):
+            self.orders_fn = lambda_.Function(
+                self, "OrdersFunction",
+                runtime=lambda_.Runtime.PYTHON_3_11,
+                handler="index.handler",
+                code=lambda_.Code.from_asset(orders_fn_path),
+                environment={
+                    "ORDERS_TABLE": self.orders_table.table_name,
+                    "POWERTOOLS_SERVICE_NAME": "orders",
+                    "POWERTOOLS_METRICS_NAMESPACE": "ECom67",
+                    "LOG_LEVEL": "INFO"
+                },
+                timeout=Duration.seconds(30),
+                tracing=lambda_.Tracing.ACTIVE,
+                layers=[self.powertools_layer]
+            )
+        else:
+            self.orders_fn = None
+
     def grant_permissions(self):
         """Grant IAM permissions to Lambda functions for DynamoDB access"""
 
@@ -215,6 +231,10 @@ class ComputeStack(Stack):
             self.orders_table.grant_read_write_data(self.order_processor_fn)
             self.cart_table.grant_read_write_data(self.order_processor_fn)
             self.products_table.grant_read_write_data(self.order_processor_fn)
+
+        # Orders Function permissions
+        if self.orders_fn:
+            self.orders_table.grant_read_data(self.orders_fn)
 
     def create_outputs(self):
         """Create CloudFormation outputs for cross-stack references"""
@@ -278,4 +298,26 @@ class ComputeStack(Stack):
                 value=self.order_processor_fn.function_name,
                 description="Order Processor Lambda function name",
                 export_name="ECom67-OrderProcessorName"
+            )
+
+        if self.orders_fn:
+            CfnOutput(
+                self, "OrdersFunctionArn",
+                value=self.orders_fn.function_arn,
+                description="Orders Lambda function ARN",
+                export_name="ECom67-OrdersFunction"
+            )
+
+            CfnOutput(
+                self, "OrdersFunctionName",
+                value=self.orders_fn.function_name,
+                description="Orders Lambda function name",
+                export_name="ECom67-OrdersFunctionName"
+            )
+            
+            CfnOutput(
+                self, "OrderProcessorRoleArn",
+                value=self.order_processor_fn.role.role_arn,
+                description="Order Processor Lambda function role ARN",
+                export_name="ECom67-OrderProcessorRoleArn"
             )

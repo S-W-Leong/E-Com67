@@ -30,11 +30,12 @@ function Cart() {
   };
 
   const handleUpdateQuantity = async (productId, newQuantity) => {
-    if (newQuantity < 1) return;
+    const quantity = parseInt(newQuantity, 10);
+    if (quantity < 1) return;
 
     setUpdating({ ...updating, [productId]: true });
     try {
-      await cartAPI.update(productId, newQuantity);
+      await cartAPI.update(productId, quantity);
       await loadCart();
       toast.success('Cart updated');
     } catch (error) {
@@ -141,7 +142,7 @@ function Cart() {
 
                       <div className="flex items-center gap-3">
                         <button
-                          onClick={() => handleUpdateQuantity(item.productId, item.quantity - 1)}
+                          onClick={() => handleUpdateQuantity(item.productId, parseInt(item.quantity, 10) - 1)}
                           disabled={updating[item.productId] || item.quantity <= 1}
                           className="w-8 h-8 rounded-full bg-gray-200 hover:bg-gray-300 disabled:opacity-50 flex items-center justify-center"
                         >
@@ -151,7 +152,7 @@ function Cart() {
                           {item.quantity}
                         </span>
                         <button
-                          onClick={() => handleUpdateQuantity(item.productId, item.quantity + 1)}
+                          onClick={() => handleUpdateQuantity(item.productId, parseInt(item.quantity, 10) + 1)}
                           disabled={updating[item.productId]}
                           className="w-8 h-8 rounded-full bg-gray-200 hover:bg-gray-300 disabled:opacity-50 flex items-center justify-center"
                         >

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { cartAPI, ordersAPI, paymentAPI } from '../services/api';
+import { cartAPI, ordersAPI } from '../services/api';
 import { getCurrentUser } from 'aws-amplify/auth';
 import LoadingSpinner from '../components/LoadingSpinner';
 import toast from 'react-hot-toast';
@@ -31,11 +31,27 @@ function Checkout() {
         getCurrentUser(),
       ]);
 
-      setCartItems(Array.isArray(cartData) ? cartData : []);
+      console.log('Cart data received:', cartData);
+      console.log('User data:', userData);
+
+      // Handle different response formats
+      if (Array.isArray(cartData)) {
+        setCartItems(cartData);
+      } else if (cartData && cartData.items && Array.isArray(cartData.items)) {
+        setCartItems(cartData.items);
+      } else if (cartData && typeof cartData === 'object') {
+        console.warn('Unexpected cart data format:', cartData);
+        setCartItems([]);
+      } else {
+        setCartItems([]);
+      }
+
       setUser(userData);
     } catch (error) {
       console.error('Failed to load checkout data:', error);
-      toast.error('Failed to load checkout information');
+      console.error('Error details:', error.response || error.message);
+      toast.error('Failed to load checkout information: ' + (error.message || 'Unknown error'));
+      setCartItems([]);
     } finally {
       setLoading(false);
     }
@@ -62,28 +78,12 @@ function Checkout() {
       const tax = subtotal * 0.1;
       const total = subtotal + tax;
 
-      // Step 1: Mock payment processing (Stripe)
-      toast.loading('Processing payment...');
-      const paymentIntent = await paymentAPI.createPaymentIntent(total);
+      toast.loading('Processing order...');
 
-      await new Promise((resolve) => setTimeout(resolve, 1500)); // Simulate processing time
+      // Generate payment token (mock for now)
+      const paymentToken = 'tok_mock_' + Math.random().toString(36).substring(7);
 
-      const paymentConfirmation = await paymentAPI.confirmPayment(
-        paymentIntent.paymentIntentId,
-        {
-          cardNumber: paymentInfo.cardNumber.slice(-4),
-          cardName: paymentInfo.cardName,
-        }
-      );
-
-      if (paymentConfirmation.status !== 'succeeded') {
-        throw new Error('Payment failed');
-      }
-
-      toast.dismiss();
-      toast.success('Payment successful!');
-
-      // Step 2: Create order
+      // Submit order to Step Functions workflow via API Gateway
       const orderData = {
         orderId: uuidv4(),
         userId: user.userId || user.username,
@@ -93,15 +93,19 @@ function Checkout() {
           price: typeof item.price === 'number' ? item.price : parseFloat(item.price),
           quantity: item.quantity,
         })),
-        totalAmount: total,
-        paymentId: paymentIntent.paymentIntentId,
+        totalAmount: total.toFixed(2),
+        paymentToken: paymentToken,
         timestamp: Date.now(),
         email: user.signInDetails?.loginId || user.username,
       };
 
-      await ordersAPI.create(orderData);
+      // POST to /orders endpoint - triggers Step Functions workflow
+      const response = await ordersAPI.create(orderData);
 
+      toast.dismiss();
       toast.success('Order placed successfully!');
+
+      console.log('Order execution:', response);
 
       // Redirect to orders page
       setTimeout(() => {
