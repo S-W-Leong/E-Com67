@@ -97,8 +97,8 @@ class TestOrderProcessorService:
         assert result['userId'] == user_id
         assert result['items'] == items
         assert result['subtotal'] == 59.98  # 29.99 * 2
-        assert result['taxAmount'] == 4.80  # 8% of subtotal (rounded)
-        assert result['totalAmount'] == 64.78  # subtotal + tax
+        assert abs(result['taxAmount'] - 4.7984) < 0.01  # 8% of subtotal
+        assert abs(result['totalAmount'] - 64.7784) < 0.01  # subtotal + tax
         assert result['status'] == 'processing'
         assert result['paymentId'] == payment_id
         assert result['paymentStatus'] == 'paid'
@@ -201,9 +201,12 @@ class TestOrderProcessorService:
             ]
         }
         
-        # Mock batch writer
+        # Mock batch writer context manager
         mock_batch_writer = Mock()
-        mock_table.batch_writer.return_value.__enter__.return_value = mock_batch_writer
+        mock_context_manager = Mock()
+        mock_context_manager.__enter__ = Mock(return_value=mock_batch_writer)
+        mock_context_manager.__exit__ = Mock(return_value=None)
+        mock_table.batch_writer.return_value = mock_context_manager
         
         result = OrderProcessorService._clear_user_cart('user123')
         

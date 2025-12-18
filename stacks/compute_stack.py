@@ -274,6 +274,7 @@ class ComputeStack(Stack):
             environment={
                 "ORDERS_TABLE_NAME": Fn.import_value("E-Com67-OrdersTableName"),
                 "STRIPE_SECRET_NAME": self.stripe_secret.secret_name,
+                "STRIPE_WEBHOOK_SECRET": "",  # Set via environment or secrets manager
                 "PAYMENT_TEST_MODE": "false",  # Set to "true" to bypass Stripe for testing
                 "POWERTOOLS_SERVICE_NAME": "payment",
                 "POWERTOOLS_METRICS_NAMESPACE": "E-Com67",
@@ -313,6 +314,25 @@ class ComputeStack(Stack):
                 batch_size=1,  # Process one order at a time
                 max_batching_window=Duration.seconds(5)
             )
+        )
+        
+        # Orders function for retrieval and management
+        self.orders_function = _lambda.Function(
+            self, "OrdersFunction",
+            function_name="e-com67-orders",
+            runtime=_lambda.Runtime.PYTHON_3_9,
+            handler="orders.handler",
+            code=_lambda.Code.from_asset("lambda/orders"),
+            layers=[self.powertools_layer, self.utils_layer],
+            role=self.lambda_execution_role,
+            environment={
+                "ORDERS_TABLE_NAME": Fn.import_value("E-Com67-OrdersTableName"),
+                "POWERTOOLS_SERVICE_NAME": "orders",
+                "POWERTOOLS_METRICS_NAMESPACE": "E-Com67",
+                "LOG_LEVEL": "INFO"
+            },
+            tracing=_lambda.Tracing.ACTIVE,
+            timeout=Duration.seconds(30)
         )
     
     def _create_step_functions_workflow(self):
@@ -501,6 +521,12 @@ class ComputeStack(Stack):
             self, "OrderProcessorFunctionArn",
             value=self.order_processor_function.function_arn,
             export_name="E-Com67-OrderProcessorFunctionArn"
+        )
+        
+        CfnOutput(
+            self, "OrdersFunctionArn",
+            value=self.orders_function.function_arn,
+            export_name="E-Com67-OrdersFunctionArn"
         )
         
         # Step Functions exports
