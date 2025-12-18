@@ -41,3 +41,6 @@ dist-ssr
 .env
 .env.local
 .env.production
+
+# Lambda layer dependencies
+layers/*/python/lib/

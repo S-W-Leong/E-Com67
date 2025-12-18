@@ -10,6 +10,7 @@ The application is organized into multiple stacks for better separation of conce
 - InfrastructureStack: Supporting services
 """
 
+import os
 import aws_cdk as cdk
 from stacks.data_stack import DataStack
 from stacks.compute_stack import ComputeStack
@@ -18,8 +19,8 @@ app = cdk.App()
 
 # Environment configuration
 env = cdk.Environment(
-    account=app.node.try_get_context("account"),
-    region=app.node.try_get_context("region") or "us-east-1"
+    account=os.environ.get("CDK_DEFAULT_ACCOUNT"),
+    region=os.environ.get("CDK_DEFAULT_REGION"),
 )
 
 # Data layer - DynamoDB tables and Cognito

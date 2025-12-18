@@ -54,6 +54,11 @@ def validate_cart_item(cart_item: Dict[str, Any]) -> Dict[str, Any]:
         if field not in cart_item:
             raise ValidationError(f"Missing required field: {field}")
     
+    # Validate product ID
+    product_id = cart_item['productId']
+    if not isinstance(product_id, str) or not product_id.strip():
+        raise ValidationError("Product ID must be a non-empty string")
+    
     # Validate quantity
     try:
         quantity = int(cart_item['quantity'])
