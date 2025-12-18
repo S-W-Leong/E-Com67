@@ -274,6 +274,7 @@ class ComputeStack(Stack):
             environment={
                 "ORDERS_TABLE_NAME": Fn.import_value("E-Com67-OrdersTableName"),
                 "STRIPE_SECRET_NAME": self.stripe_secret.secret_name,
+                "PAYMENT_TEST_MODE": "false",  # Set to "true" to bypass Stripe for testing
                 "POWERTOOLS_SERVICE_NAME": "payment",
                 "POWERTOOLS_METRICS_NAMESPACE": "E-Com67",
                 "LOG_LEVEL": "INFO"

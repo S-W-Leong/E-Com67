@@ -29,7 +29,6 @@ metrics = Metrics(namespace="E-Com67")
 
 # Initialize AWS services
 dynamodb = boto3.resource('dynamodb')
-secretsmanager = boto3.client('secretsmanager')
 
 def get_orders_table():
     """Get orders table with lazy initialization"""
@@ -38,21 +37,60 @@ def get_orders_table():
 def get_stripe_api_key():
     """Get Stripe API key from Secrets Manager"""
     try:
+        # Initialize Secrets Manager client inside the function to avoid module-level issues
+        secretsmanager = boto3.client('secretsmanager')
+
         secret_name = os.environ.get('STRIPE_SECRET_NAME', 'e-com67/stripe/api-key')
+        logger.info(f"Attempting to retrieve secret: {secret_name}")
+
         response = secretsmanager.get_secret_value(SecretId=secret_name)
+        logger.info("Successfully retrieved secret from Secrets Manager")
 
         # Parse the JSON secret to extract the api_key field
         secret_data = json.loads(response['SecretString'])
-        return secret_data.get('api_key')
+        api_key = secret_data.get('api_key')
+
+        if not api_key:
+            logger.error("Secret retrieved but 'api_key' field is empty or missing")
+            return os.environ.get('STRIPE_API_KEY')
+
+        logger.info("Successfully extracted Stripe API key from secret")
+        return api_key
 
     except ClientError as e:
-        logger.error("Failed to retrieve Stripe API key", extra={"error": str(e)})
+        error_code = e.response.get('Error', {}).get('Code', 'Unknown')
+        logger.error("Failed to retrieve Stripe API key from Secrets Manager", extra={
+            "error": str(e),
+            "error_code": error_code,
+            "secret_name": secret_name
+        })
         # For development, allow fallback to environment variable
-        return os.environ.get('STRIPE_API_KEY')
+        fallback_key = os.environ.get('STRIPE_API_KEY')
+        if fallback_key:
+            logger.warning("Using fallback STRIPE_API_KEY from environment variable")
+        return fallback_key
+
     except (json.JSONDecodeError, KeyError) as e:
-        logger.error("Failed to parse Stripe API key from secret", extra={"error": str(e)})
+        logger.error("Failed to parse Stripe API key from secret", extra={
+            "error": str(e),
+            "secret_name": secret_name
+        })
         # For development, allow fallback to environment variable
-        return os.environ.get('STRIPE_API_KEY')
+        fallback_key = os.environ.get('STRIPE_API_KEY')
+        if fallback_key:
+            logger.warning("Using fallback STRIPE_API_KEY from environment variable")
+        return fallback_key
+
+    except Exception as e:
+        logger.error("Unexpected error retrieving Stripe API key", extra={
+            "error": str(e),
+            "error_type": type(e).__name__
+        })
+        # For development, allow fallback to environment variable
+        fallback_key = os.environ.get('STRIPE_API_KEY')
+        if fallback_key:
+            logger.warning("Using fallback STRIPE_API_KEY from environment variable")
+        return fallback_key
 
 
 class PaymentService:
@@ -81,24 +119,56 @@ class PaymentService:
             order_id = payment_data.get('orderId')
             
             # Create payment intent
-            payment_intent = stripe.PaymentIntent.create(
-                amount=amount_cents,
-                currency=currency,
-                metadata={
-                    'userId': user_id,
-                    'orderId': order_id or 'pending',
-                    'source': 'e-com67-platform'
-                },
-                automatic_payment_methods={
-                    'enabled': True,
-                },
-                capture_method='automatic'
-            )
-            
-            logger.info("Payment intent created", extra={
+            # Support both frontend-provided payment methods and backend testing
+            try:
+                # Check if payment method is provided from frontend
+                payment_method_id = payment_data.get('paymentMethodId')
+
+                if payment_method_id:
+                    # Production flow: Frontend provides payment method ID
+                    logger.info(f"Using payment method from frontend: {payment_method_id}")
+
+                    payment_intent = stripe.PaymentIntent.create(
+                        amount=amount_cents,
+                        currency=currency,
+                        payment_method=payment_method_id,
+                        metadata={
+                            'userId': user_id,
+                            'orderId': order_id or 'pending',
+                            'source': 'e-com67-platform'
+                        },
+                        confirm=True,
+                        return_url=payment_data.get('returnUrl', 'https://example.com/return'),
+                    )
+                else:
+                    # Testing flow: Use Stripe's test payment method for backend testing
+                    logger.info("No payment method provided, using test payment method for backend testing")
+
+                    payment_intent = stripe.PaymentIntent.create(
+                        amount=amount_cents,
+                        currency=currency,
+                        metadata={
+                            'userId': user_id,
+                            'orderId': order_id or 'pending',
+                            'source': 'e-com67-platform'
+                        },
+                        # Use test payment method - pm_card_visa is a test Payment Method
+                        payment_method='pm_card_visa',  # Stripe's test payment method
+                        confirm=True,
+                        off_session=True,  # Allow off-session confirmation for backend testing
+                    )
+
+                logger.info(f"Payment intent created with status: {payment_intent.status}")
+
+            except stripe.error.StripeError as se:
+                logger.error(f"Stripe API error: {str(se)}", extra={"stripe_error": str(se)})
+                raise BusinessLogicError(f"Stripe payment failed: {str(se)}")
+
+            logger.info("Payment intent created and confirmed", extra={
                 "payment_intent_id": payment_intent.id,
                 "amount": amount_cents,
-                "user_id": user_id
+                "user_id": user_id,
+                "status": payment_intent.status
             })
             metrics.add_metric(name="PaymentIntentCreated", unit=MetricUnit.Count, value=1)
             
@@ -120,21 +190,48 @@ class PaymentService:
     def process_payment(payment_data: Dict[str, Any]) -> Dict[str, Any]:
         """Process payment for Step Functions workflow"""
         logger.info("Processing payment", extra={"payment_data": payment_data})
-        
+
+        # Check if we're in test mode (no Stripe key configured)
+        test_mode = os.environ.get('PAYMENT_TEST_MODE', 'false').lower() == 'true'
+
+        if test_mode:
+            logger.warning("Running in PAYMENT_TEST_MODE - bypassing Stripe")
+
+            # Return mock successful payment
+            payment_result = {
+                'success': True,
+                'paymentId': f"test_pi_{int(time.time())}",
+                'paymentStatus': 'succeeded',
+                'amount': payment_data['totalAmount'],
+                'currency': payment_data.get('currency', 'usd'),
+                'processedAt': int(time.time()),
+                'userId': payment_data['userId'],
+                'orderId': payment_data.get('orderId'),
+                'testMode': True
+            }
+
+            logger.info("Test payment processed successfully", extra={
+                "payment_id": payment_result['paymentId'],
+                "user_id": payment_data['userId']
+            })
+            metrics.add_metric(name="TestPaymentProcessed", unit=MetricUnit.Count, value=1)
+
+            return payment_result
+
         try:
             # Import Stripe here to avoid cold start issues
             import stripe
-            
+
             # Set Stripe API key
             stripe.api_key = get_stripe_api_key()
-            
+
             if not stripe.api_key:
                 raise BusinessLogicError("Stripe API key not configured")
-            
+
             # For Step Functions, we create a payment intent and return the details
             # In a real implementation, this might confirm an existing payment intent
             payment_intent_result = PaymentService.create_payment_intent(payment_data)
-            
+
             # Simulate payment processing result
             # In production, this would handle actual payment confirmation
             payment_result = {
@@ -147,19 +244,19 @@ class PaymentService:
                 'userId': payment_data['userId'],
                 'orderId': payment_data.get('orderId')
             }
-            
+
             logger.info("Payment processed successfully", extra={
                 "payment_id": payment_result['paymentId'],
                 "user_id": payment_data['userId']
             })
             metrics.add_metric(name="PaymentProcessed", unit=MetricUnit.Count, value=1)
-            
+
             return payment_result
-            
+
         except Exception as e:
             logger.error("Payment processing failed", extra={"error": str(e)})
             metrics.add_metric(name="PaymentProcessingError", unit=MetricUnit.Count, value=1)
-            
+
             # Return failure result for Step Functions
             return {
                 'success': False,
