@@ -40,5 +40,9 @@ cdk deploy E-Com67-DataStack --require-approval never
 echo "⚡ Deploying Compute Stack..."
 cdk deploy E-Com67-ComputeStack --require-approval never
 
+echo "🌐 Deploying API Stack..."
+cdk deploy E-Com67-ApiStack --require-approval never
+
 echo "✅ Deployment complete!"
 echo "📊 Check AWS Console for deployed resources"
+echo "🔗 API Gateway URL will be displayed in the stack outputs"

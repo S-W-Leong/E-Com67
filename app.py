@@ -14,6 +14,7 @@ import os
 import aws_cdk as cdk
 from stacks.data_stack import DataStack
 from stacks.compute_stack import ComputeStack
+from stacks.api_stack import ApiStack
 
 app = cdk.App()
 
@@ -40,7 +41,19 @@ compute_stack = ComputeStack(
     description="E-Com67 Platform - Compute layer with Lambda functions and layers"
 )
 
-# Add dependency to ensure proper deployment order
+# API layer - API Gateway with REST endpoints
+api_stack = ApiStack(
+    app,
+    "E-Com67-ApiStack",
+    data_stack=data_stack,
+    compute_stack=compute_stack,
+    env=env,
+    description="E-Com67 Platform - API Gateway with REST endpoints and Cognito authorization"
+)
+
+# Add dependencies to ensure proper deployment order
 compute_stack.add_dependency(data_stack)
+api_stack.add_dependency(data_stack)
+api_stack.add_dependency(compute_stack)
 
 app.synth()

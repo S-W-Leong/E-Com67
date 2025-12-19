@@ -1,0 +1,822 @@
+"""
+E-Com67 Platform API Stack
+
+This stack contains all API Gateway resources:
+- REST API with comprehensive endpoint configuration
+- Cognito authorizer for protected endpoints
+- CORS configuration for frontend integration
+- API Gateway logging and X-Ray tracing
+- Request/response validation and transformation
+"""
+
+from aws_cdk import (
+    Stack,
+    aws_apigateway as apigw,
+    aws_apigatewayv2 as apigwv2,
+    aws_lambda as _lambda,
+    aws_cognito as cognito,
+    aws_iam as iam,
+    aws_logs as logs,
+    aws_stepfunctions as sfn,
+    CfnOutput,
+    Fn,
+    Duration
+)
+from constructs import Construct
+
+
+class ApiStack(Stack):
+    """API Gateway stack for REST and WebSocket APIs"""
+
+    def __init__(self, scope: Construct, construct_id: str, data_stack, compute_stack, **kwargs) -> None:
+        super().__init__(scope, construct_id, **kwargs)
+        
+        self.data_stack = data_stack
+        self.compute_stack = compute_stack
+        
+        # Create REST API
+        self._create_rest_api()
+        
+        # Create Cognito authorizer
+        self._create_cognito_authorizer()
+        
+        # Create API endpoints
+        self._create_product_endpoints()
+        self._create_cart_endpoints()
+        self._create_order_endpoints()
+        self._create_search_endpoints()
+        self._create_admin_endpoints()
+        
+        # Create WebSocket API for real-time chat
+        self._create_websocket_api()
+        
+        # Create cross-stack exports
+        self._create_exports()
+
+    def _create_rest_api(self):
+        """Create REST API with proper CORS and logging configuration"""
+        
+        # Create CloudWatch log group for API Gateway
+        self.api_log_group = logs.LogGroup(
+            self, "ApiGatewayLogGroup",
+            log_group_name="/aws/apigateway/e-com67-api",
+            retention=logs.RetentionDays.ONE_WEEK,
+            removal_policy=self.removal_policy
+        )
+        
+        # Create REST API
+        self.rest_api = apigw.RestApi(
+            self, "RestApi",
+            rest_api_name="e-com67-api",
+            description="E-Com67 Platform REST API",
+            # CORS configuration for frontend integration
+            default_cors_preflight_options=apigw.CorsOptions(
+                allow_origins=apigw.Cors.ALL_ORIGINS,  # In production, restrict to specific domains
+                allow_methods=apigw.Cors.ALL_METHODS,
+                allow_headers=[
+                    "Content-Type",
+                    "X-Amz-Date",
+                    "Authorization",
+                    "X-Api-Key",
+                    "X-Amz-Security-Token",
+                    "X-Amz-User-Agent"
+                ],
+                allow_credentials=True,
+                max_age=Duration.hours(1)
+            ),
+            # Enable CloudWatch logging
+            deploy_options=apigw.StageOptions(
+                stage_name="prod",
+                logging_level=apigw.MethodLoggingLevel.INFO,
+                data_trace_enabled=True,
+                metrics_enabled=True,
+                tracing_enabled=True,  # Enable X-Ray tracing
+                access_log_destination=apigw.LogGroupLogDestination(self.api_log_group),
+                access_log_format=apigw.AccessLogFormat.json_with_standard_fields(
+                    caller=True,
+                    http_method=True,
+                    ip=True,
+                    protocol=True,
+                    request_time=True,
+                    resource_path=True,
+                    response_length=True,
+                    status=True,
+                    user=True
+                ),
+                throttling_rate_limit=1000,  # Requests per second
+                throttling_burst_limit=2000  # Burst capacity
+            ),
+            # Enable API key requirement for future use
+            cloud_watch_role=True,
+            endpoint_types=[apigw.EndpointType.REGIONAL]
+        )
+
+    def _create_cognito_authorizer(self):
+        """Create Cognito authorizer for protected endpoints"""
+        
+        # Import User Pool from DataStack
+        user_pool = cognito.UserPool.from_user_pool_arn(
+            self, "ImportedUserPool",
+            user_pool_arn=Fn.import_value("E-Com67-UserPoolArn")
+        )
+        
+        # Create Cognito authorizer
+        self.cognito_authorizer = apigw.CognitoUserPoolsAuthorizer(
+            self, "CognitoAuthorizer",
+            cognito_user_pools=[user_pool],
+            authorizer_name="e-com67-cognito-authorizer",
+            identity_source="method.request.header.Authorization",
+            results_cache_ttl=Duration.minutes(5)
+        )
+
+    def _create_product_endpoints(self):
+        """Set up product endpoints with proper security"""
+        
+        # Import Lambda function
+        product_crud_function = _lambda.Function.from_function_arn(
+            self, "ImportedProductCrudFunction",
+            function_arn=Fn.import_value("E-Com67-ProductCrudFunctionArn")
+        )
+        
+        # Create Lambda integration
+        product_integration = apigw.LambdaIntegration(
+            product_crud_function,
+            proxy=True,
+            allow_test_invoke=True,
+            timeout=Duration.seconds(29)
+        )
+        
+        # Create /products resource
+        products_resource = self.rest_api.root.add_resource("products")
+        
+        # GET /products - List products (public)
+        products_resource.add_method(
+            "GET",
+            product_integration,
+            authorization_type=apigw.AuthorizationType.NONE,
+            api_key_required=False,
+            method_responses=[
+                apigw.MethodResponse(
+                    status_code="200",
+                    response_parameters={
+                        "method.response.header.Access-Control-Allow-Origin": True
+                    }
+                ),
+                apigw.MethodResponse(status_code="400"),
+                apigw.MethodResponse(status_code="500")
+            ]
+        )
+        
+        # POST /products - Create product (admin only)
+        products_resource.add_method(
+            "POST",
+            product_integration,
+            authorizer=self.cognito_authorizer,
+            authorization_type=apigw.AuthorizationType.COGNITO,
+            authorization_scopes=["aws.cognito.signin.user.admin"],
+            method_responses=[
+                apigw.MethodResponse(
+                    status_code="201",
+                    response_parameters={
+                        "method.response.header.Access-Control-Allow-Origin": True
+                    }
+                ),
+                apigw.MethodResponse(status_code="400"),
+                apigw.MethodResponse(status_code="401"),
+                apigw.MethodResponse(status_code="403"),
+                apigw.MethodResponse(status_code="500")
+            ]
+        )
+        
+        # Create /products/{id} resource
+        product_id_resource = products_resource.add_resource("{id}")
+        
+        # GET /products/{id} - Get product details (public)
+        product_id_resource.add_method(
+            "GET",
+            product_integration,
+            authorization_type=apigw.AuthorizationType.NONE,
+            api_key_required=False,
+            method_responses=[
+                apigw.MethodResponse(
+                    status_code="200",
+                    response_parameters={
+                        "method.response.header.Access-Control-Allow-Origin": True
+                    }
+                ),
+                apigw.MethodResponse(status_code="404"),
+                apigw.MethodResponse(status_code="500")
+            ]
+        )
+        
+        # PUT /products/{id} - Update product (admin only)
+        product_id_resource.add_method(
+            "PUT",
+            product_integration,
+            authorizer=self.cognito_authorizer,
+            authorization_type=apigw.AuthorizationType.COGNITO,
+            authorization_scopes=["aws.cognito.signin.user.admin"],
+            method_responses=[
+                apigw.MethodResponse(
+                    status_code="200",
+                    response_parameters={
+                        "method.response.header.Access-Control-Allow-Origin": True
+                    }
+                ),
+                apigw.MethodResponse(status_code="400"),
+                apigw.MethodResponse(status_code="401"),
+                apigw.MethodResponse(status_code="403"),
+                apigw.MethodResponse(status_code="404"),
+                apigw.MethodResponse(status_code="500")
+            ]
+        )
+        
+        # DELETE /products/{id} - Delete product (admin only)
+        product_id_resource.add_method(
+            "DELETE",
+            product_integration,
+            authorizer=self.cognito_authorizer,
+            authorization_type=apigw.AuthorizationType.COGNITO,
+            authorization_scopes=["aws.cognito.signin.user.admin"],
+            method_responses=[
+                apigw.MethodResponse(
+                    status_code="204",
+                    response_parameters={
+                        "method.response.header.Access-Control-Allow-Origin": True
+                    }
+                ),
+                apigw.MethodResponse(status_code="401"),
+                apigw.MethodResponse(status_code="403"),
+                apigw.MethodResponse(status_code="404"),
+                apigw.MethodResponse(status_code="500")
+            ]
+        )
+
+    def _create_cart_endpoints(self):
+        """Set up cart endpoints with user-specific authorization"""
+        
+        # Import Lambda function
+        cart_function = _lambda.Function.from_function_arn(
+            self, "ImportedCartFunction",
+            function_arn=Fn.import_value("E-Com67-CartFunctionArn")
+        )
+        
+        # Create Lambda integration
+        cart_integration = apigw.LambdaIntegration(
+            cart_function,
+            proxy=True,
+            allow_test_invoke=True,
+            timeout=Duration.seconds(29)
+        )
+        
+        # Create /cart resource
+        cart_resource = self.rest_api.root.add_resource("cart")
+        
+        # GET /cart - Get cart contents (authenticated)
+        cart_resource.add_method(
+            "GET",
+            cart_integration,
+            authorizer=self.cognito_authorizer,
+            authorization_type=apigw.AuthorizationType.COGNITO,
+            method_responses=[
+                apigw.MethodResponse(
+                    status_code="200",
+                    response_parameters={
+                        "method.response.header.Access-Control-Allow-Origin": True
+                    }
+                ),
+                apigw.MethodResponse(status_code="401"),
+                apigw.MethodResponse(status_code="500")
+            ]
+        )
+        
+        # POST /cart - Add/update cart item (authenticated)
+        cart_resource.add_method(
+            "POST",
+            cart_integration,
+            authorizer=self.cognito_authorizer,
+            authorization_type=apigw.AuthorizationType.COGNITO,
+            method_responses=[
+                apigw.MethodResponse(
+                    status_code="200",
+                    response_parameters={
+                        "method.response.header.Access-Control-Allow-Origin": True
+                    }
+                ),
+                apigw.MethodResponse(status_code="400"),
+                apigw.MethodResponse(status_code="401"),
+                apigw.MethodResponse(status_code="404"),
+                apigw.MethodResponse(status_code="409"),
+                apigw.MethodResponse(status_code="500")
+            ]
+        )
+        
+        # DELETE /cart - Remove cart item (authenticated)
+        cart_resource.add_method(
+            "DELETE",
+            cart_integration,
+            authorizer=self.cognito_authorizer,
+            authorization_type=apigw.AuthorizationType.COGNITO,
+            method_responses=[
+                apigw.MethodResponse(
+                    status_code="204",
+                    response_parameters={
+                        "method.response.header.Access-Control-Allow-Origin": True
+                    }
+                ),
+                apigw.MethodResponse(status_code="401"),
+                apigw.MethodResponse(status_code="404"),
+                apigw.MethodResponse(status_code="500")
+            ]
+        )
+
+    def _create_order_endpoints(self):
+        """Set up order endpoints with Step Functions integration"""
+        
+        # Import Lambda function for order retrieval
+        orders_function = _lambda.Function.from_function_arn(
+            self, "ImportedOrdersFunction",
+            function_arn=Fn.import_value("E-Com67-OrdersFunctionArn")
+        )
+        
+        # Create Lambda integration for order retrieval
+        orders_integration = apigw.LambdaIntegration(
+            orders_function,
+            proxy=True,
+            allow_test_invoke=True,
+            timeout=Duration.seconds(29)
+        )
+        
+        # Import Step Functions state machine
+        checkout_state_machine = sfn.StateMachine.from_state_machine_arn(
+            self, "ImportedCheckoutStateMachine",
+            state_machine_arn=Fn.import_value("E-Com67-CheckoutStateMachineArn")
+        )
+        
+        # Create IAM role for API Gateway to invoke Step Functions
+        step_functions_integration_role = iam.Role(
+            self, "StepFunctionsIntegrationRole",
+            assumed_by=iam.ServicePrincipal("apigateway.amazonaws.com"),
+            description="Role for API Gateway to invoke Step Functions"
+        )
+        
+        step_functions_integration_role.add_to_policy(
+            iam.PolicyStatement(
+                effect=iam.Effect.ALLOW,
+                actions=["states:StartExecution"],
+                resources=[checkout_state_machine.state_machine_arn]
+            )
+        )
+        
+        # Create Step Functions integration for order placement
+        checkout_integration = apigw.AwsIntegration(
+            service="states",
+            action="StartExecution",
+            integration_http_method="POST",
+            options=apigw.IntegrationOptions(
+                credentials_role=step_functions_integration_role,
+                request_templates={
+                    "application/json": f'''{{
+                        "input": "$util.escapeJavaScript($input.json('$'))",
+                        "stateMachineArn": "{checkout_state_machine.state_machine_arn}"
+                    }}'''
+                },
+                integration_responses=[
+                    apigw.IntegrationResponse(
+                        status_code="200",
+                        response_templates={
+                            "application/json": '''#set($inputRoot = $input.path('$'))
+{
+    "executionArn": "$inputRoot.executionArn",
+    "startDate": "$inputRoot.startDate"
+}'''
+                        },
+                        response_parameters={
+                            "method.response.header.Access-Control-Allow-Origin": "'*'"
+                        }
+                    ),
+                    apigw.IntegrationResponse(
+                        status_code="400",
+                        selection_pattern="4\\d{2}",
+                        response_templates={
+                            "application/json": '{"error": "Bad Request"}'
+                        }
+                    ),
+                    apigw.IntegrationResponse(
+                        status_code="500",
+                        selection_pattern="5\\d{2}",
+                        response_templates={
+                            "application/json": '{"error": "Internal Server Error"}'
+                        }
+                    )
+                ]
+            )
+        )
+        
+        # Create /orders resource
+        orders_resource = self.rest_api.root.add_resource("orders")
+        
+        # GET /orders - Get order history (authenticated)
+        orders_resource.add_method(
+            "GET",
+            orders_integration,
+            authorizer=self.cognito_authorizer,
+            authorization_type=apigw.AuthorizationType.COGNITO,
+            method_responses=[
+                apigw.MethodResponse(
+                    status_code="200",
+                    response_parameters={
+                        "method.response.header.Access-Control-Allow-Origin": True
+                    }
+                ),
+                apigw.MethodResponse(status_code="401"),
+                apigw.MethodResponse(status_code="500")
+            ]
+        )
+        
+        # POST /orders - Place order (authenticated, triggers Step Functions)
+        orders_resource.add_method(
+            "POST",
+            checkout_integration,
+            authorizer=self.cognito_authorizer,
+            authorization_type=apigw.AuthorizationType.COGNITO,
+            method_responses=[
+                apigw.MethodResponse(
+                    status_code="200",
+                    response_parameters={
+                        "method.response.header.Access-Control-Allow-Origin": True
+                    }
+                ),
+                apigw.MethodResponse(status_code="400"),
+                apigw.MethodResponse(status_code="401"),
+                apigw.MethodResponse(status_code="500")
+            ]
+        )
+        
+        # Create /orders/{id} resource
+        order_id_resource = orders_resource.add_resource("{id}")
+        
+        # GET /orders/{id} - Get order details (authenticated)
+        order_id_resource.add_method(
+            "GET",
+            orders_integration,
+            authorizer=self.cognito_authorizer,
+            authorization_type=apigw.AuthorizationType.COGNITO,
+            method_responses=[
+                apigw.MethodResponse(
+                    status_code="200",
+                    response_parameters={
+                        "method.response.header.Access-Control-Allow-Origin": True
+                    }
+                ),
+                apigw.MethodResponse(status_code="401"),
+                apigw.MethodResponse(status_code="404"),
+                apigw.MethodResponse(status_code="500")
+            ]
+        )
+
+    def _create_search_endpoints(self):
+        """Set up search endpoints (public access)"""
+        
+        # For now, use the product CRUD function for basic search
+        # In Phase 5, this will be replaced with OpenSearch integration
+        product_crud_function = _lambda.Function.from_function_arn(
+            self, "ImportedProductCrudFunctionForSearch",
+            function_arn=Fn.import_value("E-Com67-ProductCrudFunctionArn")
+        )
+        
+        # Create Lambda integration
+        search_integration = apigw.LambdaIntegration(
+            product_crud_function,
+            proxy=True,
+            allow_test_invoke=True,
+            timeout=Duration.seconds(29)
+        )
+        
+        # Create /search resource
+        search_resource = self.rest_api.root.add_resource("search")
+        
+        # GET /search - Search products (public)
+        search_resource.add_method(
+            "GET",
+            search_integration,
+            authorization_type=apigw.AuthorizationType.NONE,
+            api_key_required=False,
+            method_responses=[
+                apigw.MethodResponse(
+                    status_code="200",
+                    response_parameters={
+                        "method.response.header.Access-Control-Allow-Origin": True
+                    }
+                ),
+                apigw.MethodResponse(status_code="400"),
+                apigw.MethodResponse(status_code="500")
+            ]
+        )
+
+    def _create_admin_endpoints(self):
+        """Set up admin endpoints with role-based access control"""
+        
+        # Import Lambda functions for admin operations
+        product_crud_function = _lambda.Function.from_function_arn(
+            self, "ImportedProductCrudFunctionForAdmin",
+            function_arn=Fn.import_value("E-Com67-ProductCrudFunctionArn")
+        )
+        
+        orders_function = _lambda.Function.from_function_arn(
+            self, "ImportedOrdersFunctionForAdmin",
+            function_arn=Fn.import_value("E-Com67-OrdersFunctionArn")
+        )
+        
+        # Create Lambda integrations
+        admin_product_integration = apigw.LambdaIntegration(
+            product_crud_function,
+            proxy=True,
+            allow_test_invoke=True,
+            timeout=Duration.seconds(29)
+        )
+        
+        admin_orders_integration = apigw.LambdaIntegration(
+            orders_function,
+            proxy=True,
+            allow_test_invoke=True,
+            timeout=Duration.seconds(29)
+        )
+        
+        # Create /admin resource
+        admin_resource = self.rest_api.root.add_resource("admin")
+        
+        # Create /admin/products resource
+        admin_products_resource = admin_resource.add_resource("products")
+        
+        # GET /admin/products - List all products with admin details (admin only)
+        admin_products_resource.add_method(
+            "GET",
+            admin_product_integration,
+            authorizer=self.cognito_authorizer,
+            authorization_type=apigw.AuthorizationType.COGNITO,
+            authorization_scopes=["aws.cognito.signin.user.admin"],
+            method_responses=[
+                apigw.MethodResponse(
+                    status_code="200",
+                    response_parameters={
+                        "method.response.header.Access-Control-Allow-Origin": True
+                    }
+                ),
+                apigw.MethodResponse(status_code="401"),
+                apigw.MethodResponse(status_code="403"),
+                apigw.MethodResponse(status_code="500")
+            ]
+        )
+        
+        # Create /admin/orders resource
+        admin_orders_resource = admin_resource.add_resource("orders")
+        
+        # GET /admin/orders - List all orders with admin details (admin only)
+        admin_orders_resource.add_method(
+            "GET",
+            admin_orders_integration,
+            authorizer=self.cognito_authorizer,
+            authorization_type=apigw.AuthorizationType.COGNITO,
+            authorization_scopes=["aws.cognito.signin.user.admin"],
+            method_responses=[
+                apigw.MethodResponse(
+                    status_code="200",
+                    response_parameters={
+                        "method.response.header.Access-Control-Allow-Origin": True
+                    }
+                ),
+                apigw.MethodResponse(status_code="401"),
+                apigw.MethodResponse(status_code="403"),
+                apigw.MethodResponse(status_code="500")
+            ]
+        )
+        
+        # PUT /admin/orders/{id} - Update order status (admin only)
+        admin_order_id_resource = admin_orders_resource.add_resource("{id}")
+        admin_order_id_resource.add_method(
+            "PUT",
+            admin_orders_integration,
+            authorizer=self.cognito_authorizer,
+            authorization_type=apigw.AuthorizationType.COGNITO,
+            authorization_scopes=["aws.cognito.signin.user.admin"],
+            method_responses=[
+                apigw.MethodResponse(
+                    status_code="200",
+                    response_parameters={
+                        "method.response.header.Access-Control-Allow-Origin": True
+                    }
+                ),
+                apigw.MethodResponse(status_code="400"),
+                apigw.MethodResponse(status_code="401"),
+                apigw.MethodResponse(status_code="403"),
+                apigw.MethodResponse(status_code="404"),
+                apigw.MethodResponse(status_code="500")
+            ]
+        )
+
+    def _create_websocket_api(self):
+        """Create WebSocket API for real-time chat functionality"""
+        
+        # Create a placeholder Lambda function for WebSocket handling
+        # This will be replaced with actual chat functionality in Phase 6
+        websocket_handler_role = iam.Role(
+            self, "WebSocketHandlerRole",
+            assumed_by=iam.ServicePrincipal("lambda.amazonaws.com"),
+            managed_policies=[
+                iam.ManagedPolicy.from_aws_managed_policy_name("service-role/AWSLambdaBasicExecutionRole"),
+                iam.ManagedPolicy.from_aws_managed_policy_name("AWSXRayDaemonWriteAccess")
+            ]
+        )
+        
+        # Add API Gateway management permissions for WebSocket
+        websocket_handler_role.add_to_policy(
+            iam.PolicyStatement(
+                effect=iam.Effect.ALLOW,
+                actions=[
+                    "execute-api:ManageConnections"
+                ],
+                resources=["*"]  # Will be restricted to specific API in production
+            )
+        )
+        
+        # Add DynamoDB permissions for chat history
+        websocket_handler_role.add_to_policy(
+            iam.PolicyStatement(
+                effect=iam.Effect.ALLOW,
+                actions=[
+                    "dynamodb:GetItem",
+                    "dynamodb:PutItem",
+                    "dynamodb:Query",
+                    "dynamodb:UpdateItem"
+                ],
+                resources=[
+                    Fn.import_value("E-Com67-ChatHistoryTableArn")
+                ]
+            )
+        )
+        
+        # Create placeholder WebSocket handler function
+        self.websocket_handler = _lambda.Function(
+            self, "WebSocketHandler",
+            function_name="e-com67-websocket-handler",
+            runtime=_lambda.Runtime.PYTHON_3_9,
+            handler="index.handler",
+            code=_lambda.Code.from_inline('''
+import json
+import boto3
+import logging
+
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+
+def handler(event, context):
+    """
+    Placeholder WebSocket handler for chat functionality.
+    This will be replaced with full AI chat implementation in Phase 6.
+    """
+    
+    route_key = event.get('requestContext', {}).get('routeKey', '')
+    connection_id = event.get('requestContext', {}).get('connectionId', '')
+    
+    logger.info(f"WebSocket event: {route_key} for connection {connection_id}")
+    
+    if route_key == '$connect':
+        return {
+            'statusCode': 200,
+            'body': json.dumps({'message': 'Connected to E-Com67 chat'})
+        }
+    elif route_key == '$disconnect':
+        return {
+            'statusCode': 200,
+            'body': json.dumps({'message': 'Disconnected from chat'})
+        }
+    elif route_key == 'sendMessage':
+        # Placeholder for message processing
+        return {
+            'statusCode': 200,
+            'body': json.dumps({
+                'message': 'Message received. AI chat will be implemented in Phase 6.',
+                'echo': event.get('body', '')
+            })
+        }
+    else:
+        return {
+            'statusCode': 400,
+            'body': json.dumps({'error': 'Unknown route'})
+        }
+            '''),
+            role=websocket_handler_role,
+            environment={
+                "CHAT_HISTORY_TABLE_NAME": Fn.import_value("E-Com67-ChatHistoryTableName"),
+                "LOG_LEVEL": "INFO"
+            },
+            tracing=_lambda.Tracing.ACTIVE,
+            timeout=Duration.seconds(30)
+        )
+        
+        # Create WebSocket API using CloudFormation resources
+        # This is a basic implementation that will be enhanced in Phase 6
+        self.websocket_api = apigwv2.CfnApi(
+            self, "WebSocketApi",
+            name="e-com67-chat-api",
+            description="E-Com67 Platform WebSocket API for real-time chat",
+            protocol_type="WEBSOCKET",
+            route_selection_expression="$request.body.action"
+        )
+        
+        # Create Lambda integration
+        websocket_integration = apigwv2.CfnIntegration(
+            self, "WebSocketIntegration",
+            api_id=self.websocket_api.ref,
+            integration_type="AWS_PROXY",
+            integration_uri=f"arn:aws:apigateway:{self.region}:lambda:path/2015-03-31/functions/{self.websocket_handler.function_arn}/invocations"
+        )
+        
+        # Create routes
+        connect_route = apigwv2.CfnRoute(
+            self, "ConnectRoute",
+            api_id=self.websocket_api.ref,
+            route_key="$connect",
+            target=f"integrations/{websocket_integration.ref}"
+        )
+        
+        disconnect_route = apigwv2.CfnRoute(
+            self, "DisconnectRoute",
+            api_id=self.websocket_api.ref,
+            route_key="$disconnect",
+            target=f"integrations/{websocket_integration.ref}"
+        )
+        
+        send_message_route = apigwv2.CfnRoute(
+            self, "SendMessageRoute",
+            api_id=self.websocket_api.ref,
+            route_key="sendMessage",
+            target=f"integrations/{websocket_integration.ref}"
+        )
+        
+        # Create deployment
+        websocket_deployment = apigwv2.CfnDeployment(
+            self, "WebSocketDeployment",
+            api_id=self.websocket_api.ref
+        )
+        websocket_deployment.add_dependency(connect_route)
+        websocket_deployment.add_dependency(disconnect_route)
+        websocket_deployment.add_dependency(send_message_route)
+        
+        # Create stage
+        self.websocket_stage = apigwv2.CfnStage(
+            self, "WebSocketStage",
+            api_id=self.websocket_api.ref,
+            deployment_id=websocket_deployment.ref,
+            stage_name="prod"
+        )
+        
+        # Grant API Gateway permission to invoke the Lambda function
+        self.websocket_handler.add_permission(
+            "AllowApiGatewayInvoke",
+            principal=iam.ServicePrincipal("apigateway.amazonaws.com"),
+            action="lambda:InvokeFunction",
+            source_arn=f"arn:aws:execute-api:{self.region}:{self.account}:{self.websocket_api.ref}/*/*"
+        )
+
+    def _create_exports(self):
+        """Create CloudFormation exports for cross-stack resource sharing"""
+        
+        CfnOutput(
+            self, "RestApiId",
+            value=self.rest_api.rest_api_id,
+            export_name="E-Com67-RestApiId"
+        )
+        
+        CfnOutput(
+            self, "RestApiUrl",
+            value=self.rest_api.url,
+            export_name="E-Com67-RestApiUrl",
+            description="Base URL for the REST API"
+        )
+        
+        CfnOutput(
+            self, "RestApiEndpoint",
+            value=f"{self.rest_api.url}",
+            description="REST API endpoint for frontend configuration"
+        )
+        
+        CfnOutput(
+            self, "WebSocketApiId",
+            value=self.websocket_api.ref,
+            export_name="E-Com67-WebSocketApiId"
+        )
+        
+        CfnOutput(
+            self, "WebSocketApiUrl",
+            value=f"wss://{self.websocket_api.ref}.execute-api.{self.region}.amazonaws.com/prod",
+            export_name="E-Com67-WebSocketApiUrl",
+            description="WebSocket API endpoint for real-time chat"
+        )
+
+    @property
+    def removal_policy(self):
+        """Get removal policy for development environment"""
+        from aws_cdk import RemovalPolicy
+        return RemovalPolicy.DESTROY  # For development
