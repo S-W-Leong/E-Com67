@@ -43,4 +43,5 @@ dist-ssr
 .env.production
 
 # Lambda layer dependencies
-layers/*/python/lib/
+layers/*/python/
+layers/*/nodejs/

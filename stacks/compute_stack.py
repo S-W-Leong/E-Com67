@@ -14,6 +14,7 @@ from aws_cdk import (
     Stack,
     aws_lambda as _lambda,
     aws_lambda_event_sources as lambda_event_sources,
+    aws_dynamodb as dynamodb,
     aws_iam as iam,
     aws_stepfunctions as sfn,
     aws_stepfunctions_tasks as sfn_tasks,
@@ -21,6 +22,7 @@ from aws_cdk import (
     aws_sns as sns,
     aws_secretsmanager as secretsmanager,
     aws_logs as logs,
+    aws_opensearchserverless as opensearchserverless,
     CfnOutput,
     Fn,
     Duration
@@ -49,6 +51,9 @@ class ComputeStack(Stack):
         
         # Create Lambda functions
         self._create_lambda_functions()
+        
+        # Create OpenSearch functions
+        self._create_opensearch_functions()
         
         # Create Step Functions workflow
         self._create_step_functions_workflow()
@@ -86,6 +91,16 @@ class ComputeStack(Stack):
             code=_lambda.Code.from_asset("layers/stripe"),
             compatible_runtimes=[_lambda.Runtime.PYTHON_3_9, _lambda.Runtime.PYTHON_3_10],
             description="Stripe SDK for payment processing integration",
+            removal_policy=self.removal_policy
+        )
+        
+        # OpenSearch layer
+        self.opensearch_layer = _lambda.LayerVersion(
+            self, "OpenSearchLayer",
+            layer_version_name="e-com67-opensearch",
+            code=_lambda.Code.from_asset("layers/opensearch"),
+            compatible_runtimes=[_lambda.Runtime.PYTHON_3_9, _lambda.Runtime.PYTHON_3_10],
+            description="OpenSearch Python client for search functionality",
             removal_policy=self.removal_policy
         )
 
@@ -334,6 +349,122 @@ class ComputeStack(Stack):
             tracing=_lambda.Tracing.ACTIVE,
             timeout=Duration.seconds(30)
         )
+
+    def _create_opensearch_functions(self):
+        """Create Lambda functions for OpenSearch integration"""
+        
+        # Add OpenSearch permissions to Lambda execution role
+        self.lambda_execution_role.add_to_policy(
+            iam.PolicyStatement(
+                effect=iam.Effect.ALLOW,
+                actions=[
+                    "aoss:APIAccessAll"  # OpenSearch Serverless permissions
+                ],
+                resources=[
+                    Fn.import_value("E-Com67-OpenSearchCollectionArn")
+                ]
+            )
+        )
+        
+        # Create OpenSearch data access policy after Lambda role is created
+        self._create_opensearch_data_access_policy()
+        
+        # Search Sync function - triggered by DynamoDB Streams
+        self.search_sync_function = _lambda.Function(
+            self, "SearchSyncFunction",
+            function_name="e-com67-search-sync",
+            runtime=_lambda.Runtime.PYTHON_3_9,
+            handler="search_sync.handler",
+            code=_lambda.Code.from_asset("lambda/search_sync"),
+            layers=[self.powertools_layer, self.utils_layer, self.opensearch_layer],
+            role=self.lambda_execution_role,
+            environment={
+                "OPENSEARCH_ENDPOINT": Fn.import_value("E-Com67-OpenSearchEndpoint"),
+                "POWERTOOLS_SERVICE_NAME": "search-sync",
+                "POWERTOOLS_METRICS_NAMESPACE": "E-Com67",
+                "LOG_LEVEL": "INFO"
+            },
+            tracing=_lambda.Tracing.ACTIVE,
+            timeout=Duration.minutes(5),
+            memory_size=512
+        )
+        
+        # Configure DynamoDB Stream trigger for products table
+        # Note: The stream is already enabled on the products table in DataStack
+        self.search_sync_function.add_event_source(
+            lambda_event_sources.DynamoEventSource(
+                table=self.data_stack.products_table,
+                starting_position=_lambda.StartingPosition.LATEST,
+                batch_size=10,
+                max_batching_window=Duration.seconds(5),
+                retry_attempts=3
+            )
+        )
+        
+        # Search function - handles search API requests
+        self.search_function = _lambda.Function(
+            self, "SearchFunction",
+            function_name="e-com67-search",
+            runtime=_lambda.Runtime.PYTHON_3_9,
+            handler="search.handler",
+            code=_lambda.Code.from_asset("lambda/search"),
+            layers=[self.powertools_layer, self.utils_layer, self.opensearch_layer],
+            role=self.lambda_execution_role,
+            environment={
+                "OPENSEARCH_ENDPOINT": Fn.import_value("E-Com67-OpenSearchEndpoint"),
+                "POWERTOOLS_SERVICE_NAME": "search",
+                "POWERTOOLS_METRICS_NAMESPACE": "E-Com67",
+                "LOG_LEVEL": "INFO"
+            },
+            tracing=_lambda.Tracing.ACTIVE,
+            timeout=Duration.seconds(30),
+            memory_size=256
+        )
+    
+    def _create_opensearch_data_access_policy(self):
+        """
+        Create OpenSearch Serverless data access policy.
+        
+        This policy grants the Lambda execution role permission to access the
+        OpenSearch collection. It must be created after the Lambda role exists
+        to avoid circular dependencies.
+        """
+        
+        # Create data access policy for Lambda functions
+        self.opensearch_data_access_policy = opensearchserverless.CfnAccessPolicy(
+            self, "OpenSearchDataAccessPolicy",
+            name="e-com67-data-access-policy",
+            type="data",
+            policy=json.dumps([
+                {
+                    "Rules": [
+                        {
+                            "ResourceType": "collection",
+                            "Resource": [f"collection/e-com67-products"],
+                            "Permission": [
+                                "aoss:CreateCollectionItems",
+                                "aoss:UpdateCollectionItems",
+                                "aoss:DescribeCollectionItems"
+                            ]
+                        },
+                        {
+                            "ResourceType": "index",
+                            "Resource": [f"index/e-com67-products/*"],
+                            "Permission": [
+                                "aoss:CreateIndex",
+                                "aoss:UpdateIndex",
+                                "aoss:DescribeIndex",
+                                "aoss:ReadDocument",
+                                "aoss:WriteDocument"
+                            ]
+                        }
+                    ],
+                    "Principal": [
+                        self.lambda_execution_role.role_arn
+                    ]
+                }
+            ])
+        )
     
     def _create_step_functions_workflow(self):
         """Create Step Functions state machine for order processing workflow"""
@@ -498,6 +629,12 @@ class ComputeStack(Stack):
             export_name="E-Com67-StripeLayerArn"
         )
         
+        CfnOutput(
+            self, "OpenSearchLayerArn",
+            value=self.opensearch_layer.layer_version_arn,
+            export_name="E-Com67-OpenSearchLayerArn"
+        )
+        
         # Lambda function exports
         CfnOutput(
             self, "ProductCrudFunctionArn",
@@ -527,6 +664,18 @@ class ComputeStack(Stack):
             self, "OrdersFunctionArn",
             value=self.orders_function.function_arn,
             export_name="E-Com67-OrdersFunctionArn"
+        )
+        
+        CfnOutput(
+            self, "SearchSyncFunctionArn",
+            value=self.search_sync_function.function_arn,
+            export_name="E-Com67-SearchSyncFunctionArn"
+        )
+        
+        CfnOutput(
+            self, "SearchFunctionArn",
+            value=self.search_function.function_arn,
+            export_name="E-Com67-SearchFunctionArn"
         )
         
         # Step Functions exports

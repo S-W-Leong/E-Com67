@@ -476,18 +476,17 @@ class ApiStack(Stack):
         )
 
     def _create_search_endpoints(self):
-        """Set up search endpoints (public access)"""
+        """Set up search endpoints with OpenSearch integration"""
         
-        # For now, use the product CRUD function for basic search
-        # In Phase 5, this will be replaced with OpenSearch integration
-        product_crud_function = _lambda.Function.from_function_arn(
-            self, "ImportedProductCrudFunctionForSearch",
-            function_arn=Fn.import_value("E-Com67-ProductCrudFunctionArn")
+        # Import the dedicated search function
+        search_function = _lambda.Function.from_function_arn(
+            self, "ImportedSearchFunction",
+            function_arn=Fn.import_value("E-Com67-SearchFunctionArn")
         )
         
         # Create Lambda integration
         search_integration = apigw.LambdaIntegration(
-            product_crud_function,
+            search_function,
             proxy=True,
             allow_test_invoke=True,
             timeout=Duration.seconds(29)
@@ -498,6 +497,27 @@ class ApiStack(Stack):
         
         # GET /search - Search products (public)
         search_resource.add_method(
+            "GET",
+            search_integration,
+            authorization_type=apigw.AuthorizationType.NONE,
+            api_key_required=False,
+            method_responses=[
+                apigw.MethodResponse(
+                    status_code="200",
+                    response_parameters={
+                        "method.response.header.Access-Control-Allow-Origin": True
+                    }
+                ),
+                apigw.MethodResponse(status_code="400"),
+                apigw.MethodResponse(status_code="500")
+            ]
+        )
+        
+        # Create /search/suggest resource for autocomplete
+        suggest_resource = search_resource.add_resource("suggest")
+        
+        # GET /search/suggest - Get search suggestions (public)
+        suggest_resource.add_method(
             "GET",
             search_integration,
             authorization_type=apigw.AuthorizationType.NONE,

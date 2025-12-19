@@ -11,11 +11,15 @@ from aws_cdk import (
     Stack,
     aws_dynamodb as dynamodb,
     aws_cognito as cognito,
+    aws_opensearchserverless as opensearchserverless,
+    aws_iam as iam,
     CfnOutput,
     RemovalPolicy,
-    Duration
+    Duration,
+    Aws
 )
 from constructs import Construct
+import json
 
 
 class DataStack(Stack):
@@ -32,6 +36,9 @@ class DataStack(Stack):
         
         # Create Cognito User Pool
         self._create_user_pool()
+        
+        # Create OpenSearch domain for product search
+        self._create_opensearch_domain()
         
         # Create cross-stack exports
         self._create_exports()
@@ -193,6 +200,108 @@ class DataStack(Stack):
             precedence=1
         )
 
+    def _create_opensearch_domain(self):
+        """Create OpenSearch Serverless collection for product search"""
+
+        # Create encryption policy for the collection
+        self.opensearch_encryption_policy = opensearchserverless.CfnSecurityPolicy(
+            self, "OpenSearchEncryptionPolicy",
+            name="e-com67-encryption-policy",
+            type="encryption",
+            policy=json.dumps(
+                {
+                    "Rules": [
+                        {
+                            "ResourceType": "collection",
+                            "Resource": ["collection/e-com67-products"]
+                        }
+                    ],
+                    "AWSOwnedKey": True
+                }
+            )
+        )
+
+        # Create network policy for public access (no VPC required)
+        self.opensearch_network_policy = opensearchserverless.CfnSecurityPolicy(
+            self, "OpenSearchNetworkPolicy",
+            name="e-com67-network-policy",
+            type="network",
+            policy=json.dumps(
+                [
+                    {
+                        "Rules": [
+                            {
+                                "Resource": ["collection/e-com67-products"],
+                                "ResourceType": "collection"
+                            }
+                        ],
+                        "AllowFromPublic": True
+                    }
+                ]
+            )
+        )
+
+        # Create the OpenSearch Serverless collection
+        self.opensearch_collection = opensearchserverless.CfnCollection(
+            self, "ProductSearchCollection",
+            name="e-com67-products",
+            description="Product search collection for E-Com67 platform",
+            type="SEARCH"
+        )
+
+        # Collection depends on policies
+        self.opensearch_collection.add_dependency(self.opensearch_encryption_policy)
+        self.opensearch_collection.add_dependency(self.opensearch_network_policy)
+
+        # Create data access policy for IAM-based access
+        # This allows Lambda functions to access the collection
+        self.opensearch_data_policy = opensearchserverless.CfnAccessPolicy(
+            self, "OpenSearchDataPolicy",
+            name="e-com67-data-policy",
+            type="data",
+            policy=json.dumps(
+                [
+                    {
+                        "Rules": [
+                            {
+                                "Resource": [f"collection/e-com67-products"],
+                                "Permission": [
+                                    "aoss:CreateCollectionItems",
+                                    "aoss:DeleteCollectionItems",
+                                    "aoss:UpdateCollectionItems",
+                                    "aoss:DescribeCollectionItems"
+                                ],
+                                "ResourceType": "collection"
+                            },
+                            {
+                                "Resource": [f"index/e-com67-products/*"],
+                                "Permission": [
+                                    "aoss:CreateIndex",
+                                    "aoss:DeleteIndex",
+                                    "aoss:UpdateIndex",
+                                    "aoss:DescribeIndex",
+                                    "aoss:ReadDocument",
+                                    "aoss:WriteDocument"
+                                ],
+                                "ResourceType": "index"
+                            }
+                        ],
+                        "Principal": [
+                            f"arn:aws:iam::{Aws.ACCOUNT_ID}:root"
+                        ],
+                        "Description": "Data access for e-com67 products collection"
+                    }
+                ]
+            )
+        )
+
+        self.opensearch_data_policy.add_dependency(self.opensearch_collection)
+
+        # Store collection properties for exports
+        self.opensearch_collection_id = self.opensearch_collection.attr_id
+        self.opensearch_collection_arn = self.opensearch_collection.attr_arn
+        self.opensearch_endpoint = f"https://{self.opensearch_collection.attr_collection_endpoint}"
+
     def _create_exports(self):
         """Create CloudFormation exports for cross-stack resource sharing"""
         # DynamoDB table exports
@@ -267,4 +376,24 @@ class DataStack(Stack):
             self, "UserPoolClientId",
             value=self.user_pool_client.user_pool_client_id,
             export_name="E-Com67-UserPoolClientId"
+        )
+        
+        # OpenSearch exports (placeholder values for manual setup)
+        CfnOutput(
+            self, "OpenSearchCollectionId",
+            value=self.opensearch_collection_id,
+            export_name="E-Com67-OpenSearchCollectionId"
+        )
+        
+        CfnOutput(
+            self, "OpenSearchCollectionArn",
+            value=self.opensearch_collection_arn,
+            export_name="E-Com67-OpenSearchCollectionArn"
+        )
+        
+        CfnOutput(
+            self, "OpenSearchEndpoint",
+            value=self.opensearch_endpoint,
+            export_name="E-Com67-OpenSearchEndpoint",
+            description="OpenSearch collection endpoint for search operations (to be updated manually)"
         )

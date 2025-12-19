@@ -18,6 +18,8 @@ pip install -r requirements.txt
 echo "🔧 Building Lambda layers..."
 mkdir -p layers/powertools/python/lib/python3.9/site-packages
 mkdir -p layers/stripe/python/lib/python3.9/site-packages
+mkdir -p layers/opensearch/python/lib/python3.9/site-packages
+mkdir -p layers/utils/python/lib/python3.9/site-packages
 
 # Install powertools layer dependencies
 cd layers/powertools/python
@@ -28,6 +30,18 @@ cd ../../../
 cd layers/stripe/python
 pip install -r requirements.txt -t lib/python3.9/site-packages/
 cd ../../../
+
+# Install opensearch layer dependencies
+cd layers/opensearch/python
+pip install -r requirements.txt -t lib/python3.9/site-packages/
+cd ../../../
+
+# Install utils layer dependencies (if requirements.txt exists)
+if [ -f "layers/utils/python/requirements.txt" ]; then
+    cd layers/utils/python
+    pip install -r requirements.txt -t lib/python3.9/site-packages/
+    cd ../../../
+fi
 
 # Synthesize CDK templates
 echo "🏗️  Synthesizing CDK templates..."
