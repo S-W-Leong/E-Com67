@@ -240,6 +240,31 @@ class ComputeStack(Stack):
             )
         )
         
+        # Add Bedrock permissions for AI chat
+        self.lambda_execution_role.add_to_policy(
+            iam.PolicyStatement(
+                effect=iam.Effect.ALLOW,
+                actions=[
+                    "bedrock:InvokeModel"
+                ],
+                resources=[
+                    f"arn:aws:bedrock:{self.region}::foundation-model/anthropic.claude-3-haiku-20240307-v1:0",
+                    f"arn:aws:bedrock:{self.region}::foundation-model/anthropic.claude-3-sonnet-20240229-v1:0"
+                ]
+            )
+        )
+        
+        # Add API Gateway Management permissions for WebSocket
+        self.lambda_execution_role.add_to_policy(
+            iam.PolicyStatement(
+                effect=iam.Effect.ALLOW,
+                actions=[
+                    "execute-api:ManageConnections"
+                ],
+                resources=["*"]  # Will be restricted to specific API in production
+            )
+        )
+        
         # Product CRUD function
         self.product_crud_function = _lambda.Function(
             self, "ProductCrudFunction",
@@ -348,6 +373,28 @@ class ComputeStack(Stack):
             },
             tracing=_lambda.Tracing.ACTIVE,
             timeout=Duration.seconds(30)
+        )
+        
+        # Chat function for AI-powered customer support
+        self.chat_function = _lambda.Function(
+            self, "ChatFunction",
+            function_name="e-com67-chat",
+            runtime=_lambda.Runtime.PYTHON_3_9,
+            handler="chat.handler",
+            code=_lambda.Code.from_asset("lambda/chat"),
+            layers=[self.powertools_layer, self.utils_layer],
+            role=self.lambda_execution_role,
+            environment={
+                "CHAT_HISTORY_TABLE_NAME": Fn.import_value("E-Com67-ChatHistoryTableName"),
+                "PRODUCTS_TABLE_NAME": Fn.import_value("E-Com67-ProductsTableName"),
+                "BEDROCK_MODEL_ID": "anthropic.claude-3-haiku-20240307-v1:0",
+                "POWERTOOLS_SERVICE_NAME": "chat",
+                "POWERTOOLS_METRICS_NAMESPACE": "E-Com67",
+                "LOG_LEVEL": "INFO"
+            },
+            tracing=_lambda.Tracing.ACTIVE,
+            timeout=Duration.seconds(30),
+            memory_size=512
         )
 
     def _create_opensearch_functions(self):
@@ -676,6 +723,12 @@ class ComputeStack(Stack):
             self, "SearchFunctionArn",
             value=self.search_function.function_arn,
             export_name="E-Com67-SearchFunctionArn"
+        )
+        
+        CfnOutput(
+            self, "ChatFunctionArn",
+            value=self.chat_function.function_arn,
+            export_name="E-Com67-ChatFunctionArn"
         )
         
         # Step Functions exports

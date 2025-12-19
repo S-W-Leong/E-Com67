@@ -638,101 +638,10 @@ class ApiStack(Stack):
     def _create_websocket_api(self):
         """Create WebSocket API for real-time chat functionality"""
         
-        # Create a placeholder Lambda function for WebSocket handling
-        # This will be replaced with actual chat functionality in Phase 6
-        websocket_handler_role = iam.Role(
-            self, "WebSocketHandlerRole",
-            assumed_by=iam.ServicePrincipal("lambda.amazonaws.com"),
-            managed_policies=[
-                iam.ManagedPolicy.from_aws_managed_policy_name("service-role/AWSLambdaBasicExecutionRole"),
-                iam.ManagedPolicy.from_aws_managed_policy_name("AWSXRayDaemonWriteAccess")
-            ]
-        )
-        
-        # Add API Gateway management permissions for WebSocket
-        websocket_handler_role.add_to_policy(
-            iam.PolicyStatement(
-                effect=iam.Effect.ALLOW,
-                actions=[
-                    "execute-api:ManageConnections"
-                ],
-                resources=["*"]  # Will be restricted to specific API in production
-            )
-        )
-        
-        # Add DynamoDB permissions for chat history
-        websocket_handler_role.add_to_policy(
-            iam.PolicyStatement(
-                effect=iam.Effect.ALLOW,
-                actions=[
-                    "dynamodb:GetItem",
-                    "dynamodb:PutItem",
-                    "dynamodb:Query",
-                    "dynamodb:UpdateItem"
-                ],
-                resources=[
-                    Fn.import_value("E-Com67-ChatHistoryTableArn")
-                ]
-            )
-        )
-        
-        # Create placeholder WebSocket handler function
-        self.websocket_handler = _lambda.Function(
-            self, "WebSocketHandler",
-            function_name="e-com67-websocket-handler",
-            runtime=_lambda.Runtime.PYTHON_3_9,
-            handler="index.handler",
-            code=_lambda.Code.from_inline('''
-import json
-import boto3
-import logging
-
-logger = logging.getLogger()
-logger.setLevel(logging.INFO)
-
-def handler(event, context):
-    """
-    Placeholder WebSocket handler for chat functionality.
-    This will be replaced with full AI chat implementation in Phase 6.
-    """
-    
-    route_key = event.get('requestContext', {}).get('routeKey', '')
-    connection_id = event.get('requestContext', {}).get('connectionId', '')
-    
-    logger.info(f"WebSocket event: {route_key} for connection {connection_id}")
-    
-    if route_key == '$connect':
-        return {
-            'statusCode': 200,
-            'body': json.dumps({'message': 'Connected to E-Com67 chat'})
-        }
-    elif route_key == '$disconnect':
-        return {
-            'statusCode': 200,
-            'body': json.dumps({'message': 'Disconnected from chat'})
-        }
-    elif route_key == 'sendMessage':
-        # Placeholder for message processing
-        return {
-            'statusCode': 200,
-            'body': json.dumps({
-                'message': 'Message received. AI chat will be implemented in Phase 6.',
-                'echo': event.get('body', '')
-            })
-        }
-    else:
-        return {
-            'statusCode': 400,
-            'body': json.dumps({'error': 'Unknown route'})
-        }
-            '''),
-            role=websocket_handler_role,
-            environment={
-                "CHAT_HISTORY_TABLE_NAME": Fn.import_value("E-Com67-ChatHistoryTableName"),
-                "LOG_LEVEL": "INFO"
-            },
-            tracing=_lambda.Tracing.ACTIVE,
-            timeout=Duration.seconds(30)
+        # Import the chat function from compute stack
+        self.chat_function = _lambda.Function.from_function_arn(
+            self, "ImportedChatFunction",
+            function_arn=Fn.import_value("E-Com67-ChatFunctionArn")
         )
         
         # Create WebSocket API using CloudFormation resources
@@ -750,7 +659,7 @@ def handler(event, context):
             self, "WebSocketIntegration",
             api_id=self.websocket_api.ref,
             integration_type="AWS_PROXY",
-            integration_uri=f"arn:aws:apigateway:{self.region}:lambda:path/2015-03-31/functions/{self.websocket_handler.function_arn}/invocations"
+            integration_uri=f"arn:aws:apigateway:{self.region}:lambda:path/2015-03-31/functions/{self.chat_function.function_arn}/invocations"
         )
         
         # Create routes
@@ -793,7 +702,7 @@ def handler(event, context):
         )
         
         # Grant API Gateway permission to invoke the Lambda function
-        self.websocket_handler.add_permission(
+        self.chat_function.add_permission(
             "AllowApiGatewayInvoke",
             principal=iam.ServicePrincipal("apigateway.amazonaws.com"),
             action="lambda:InvokeFunction",

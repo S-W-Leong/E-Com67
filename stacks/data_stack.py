@@ -203,42 +203,56 @@ class DataStack(Stack):
     def _create_opensearch_domain(self):
         """Create OpenSearch Serverless collection for product search"""
 
-        # Create encryption policy for the collection
+        # Create encryption policy - must be a single object (not an array) with Rules and AWSOwnedKey
+        encryption_policy = {
+            "Rules": [
+                {
+                    "ResourceType": "collection",
+                    "Resource": ["collection/e-com67-products"]
+                }
+            ],
+            "AWSOwnedKey": True
+        }
+
         self.opensearch_encryption_policy = opensearchserverless.CfnSecurityPolicy(
             self, "OpenSearchEncryptionPolicy",
             name="e-com67-encryption-policy",
             type="encryption",
-            policy=json.dumps(
-                {
-                    "Rules": [
-                        {
-                            "ResourceType": "collection",
-                            "Resource": ["collection/e-com67-products"]
-                        }
-                    ],
-                    "AWSOwnedKey": True
-                }
-            )
+            policy=json.dumps(encryption_policy)
         )
 
-        # Create network policy for public access (no VPC required)
+        # Create network policy for public access
+        # Network policy must be an array of policy statements
+        # Each statement needs: Rules (with ResourceType and Resource) and AllowFromPublic at the statement level
+        # Do NOT include SourceVPCEs or SourceServices when AllowFromPublic is true
+        network_policy = [
+            {
+                "Description": "Public access for e-com67 products collection",
+                "Rules": [
+                    {
+                        "ResourceType": "collection",
+                        "Resource": ["collection/e-com67-products"]
+                    }
+                ],
+                "AllowFromPublic": True
+            },
+            {
+                "Description": "Public access for e-com67 products dashboard",
+                "Rules": [
+                    {
+                        "ResourceType": "dashboard",
+                        "Resource": ["collection/e-com67-products"]
+                    }
+                ],
+                "AllowFromPublic": True
+            }
+        ]
+
         self.opensearch_network_policy = opensearchserverless.CfnSecurityPolicy(
             self, "OpenSearchNetworkPolicy",
             name="e-com67-network-policy",
             type="network",
-            policy=json.dumps(
-                [
-                    {
-                        "Rules": [
-                            {
-                                "Resource": ["collection/e-com67-products"],
-                                "ResourceType": "collection"
-                            }
-                        ],
-                        "AllowFromPublic": True
-                    }
-                ]
-            )
+            policy=json.dumps(network_policy)
         )
 
         # Create the OpenSearch Serverless collection
