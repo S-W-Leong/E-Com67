@@ -4,12 +4,18 @@ A comprehensive serverless e-commerce platform built on AWS demonstrating modern
 
 ## Architecture Overview
 
-The platform follows a multi-stack CDK architecture with clear separation of concerns:
+The platform follows a dual-frontend architecture with serverless backend:
 
+### Backend (AWS CDK)
 - **DataStack**: DynamoDB tables and Cognito User Pool
 - **ComputeStack**: Lambda functions and layers
 - **ApiStack**: API Gateway configuration (future)
 - **InfrastructureStack**: Supporting services (future)
+
+### Frontend Applications
+- **Admin Dashboard** (`frontends/admin-dashboard/`): Administrative interface for staff
+- **Customer Application** (`frontends/customer-app/`): Customer-facing shopping experience
+- **Shared Components** (`frontends/shared/`): Reusable components and utilities
 
 ## Project Structure
 
@@ -24,10 +30,15 @@ The platform follows a multi-stack CDK architecture with clear separation of con
 ├── lambda/              # Lambda function code
 │   ├── product_crud/    # Product CRUD operations
 │   └── cart/           # Shopping cart operations
-└── layers/             # Lambda layers
-    ├── powertools/     # AWS Lambda Powertools
-    ├── utils/         # Common utilities
-    └── stripe/        # Stripe SDK
+├── layers/             # Lambda layers
+│   ├── powertools/     # AWS Lambda Powertools
+│   ├── utils/         # Common utilities
+│   └── stripe/        # Stripe SDK
+└── frontends/          # Frontend applications
+    ├── admin-dashboard/ # Admin interface (React)
+    ├── customer-app/   # Customer shopping app (React)
+    ├── shared/        # Shared components library
+    └── README.md      # Frontend documentation
 ```
 
 ## Getting Started

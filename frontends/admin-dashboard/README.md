@@ -1,6 +1,16 @@
 # E-Com67 Admin Dashboard
 
-A React-based admin dashboard for managing the E-Com67 e-commerce platform.
+A React-based administrative interface for managing the E-Com67 e-commerce platform. This is part of the dual-frontend architecture, specifically designed for administrators and staff to manage products, orders, and platform operations.
+
+## Architecture
+
+This admin dashboard is part of the E-Com67 dual-frontend architecture:
+
+- **Admin Dashboard** (`frontends/admin-dashboard/`): This application - administrative interface
+- **Customer Application** (`frontends/customer-app/`): Customer-facing shopping experience  
+- **Shared Components** (`frontends/shared/`): Reusable components and utilities
+
+Both applications connect to the same backend infrastructure but provide role-specific user experiences.
 
 ## Features
 

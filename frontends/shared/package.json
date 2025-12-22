@@ -1,0 +1,23 @@
+{
+  "name": "@e-com67/shared",
+  "version": "1.0.0",
+  "description": "Shared components and utilities for E-Com67 frontend applications",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite build --watch"
+  },
+  "peerDependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.2.1",
+    "vite": "^5.1.4"
+  },
+  "dependencies": {
+    "lucide-react": "^0.344.0",
+    "clsx": "^2.1.0"
+  }
+}
