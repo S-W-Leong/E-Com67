@@ -23,9 +23,9 @@ logger = Logger()
 tracer = Tracer()
 metrics = Metrics()
 
-# Initialize AWS clients
-dynamodb = boto3.resource('dynamodb')
-bedrock_runtime = boto3.client('bedrock-runtime')
+# Initialize AWS clients (will be initialized lazily)
+dynamodb = None
+bedrock_runtime = None
 apigateway_management = None  # Will be initialized per request
 
 # Environment variables
@@ -33,9 +33,22 @@ CHAT_HISTORY_TABLE_NAME = os.environ.get('CHAT_HISTORY_TABLE_NAME')
 PRODUCTS_TABLE_NAME = os.environ.get('PRODUCTS_TABLE_NAME')
 BEDROCK_MODEL_ID = os.environ.get('BEDROCK_MODEL_ID', 'anthropic.claude-3-haiku-20240307-v1:0')
 
-# DynamoDB tables
-chat_history_table = dynamodb.Table(CHAT_HISTORY_TABLE_NAME)
-products_table = dynamodb.Table(PRODUCTS_TABLE_NAME)
+# DynamoDB tables (will be initialized lazily)
+chat_history_table = None
+products_table = None
+
+
+def _initialize_aws_clients():
+    """Initialize AWS clients lazily to avoid issues during testing"""
+    global dynamodb, bedrock_runtime, chat_history_table, products_table
+    
+    if dynamodb is None:
+        dynamodb = boto3.resource('dynamodb')
+        chat_history_table = dynamodb.Table(CHAT_HISTORY_TABLE_NAME)
+        products_table = dynamodb.Table(PRODUCTS_TABLE_NAME)
+    
+    if bedrock_runtime is None:
+        bedrock_runtime = boto3.client('bedrock-runtime')
 
 
 class ChatError(Exception):
@@ -53,6 +66,9 @@ def handler(event: Dict[str, Any], context: LambdaContext) -> Dict[str, Any]:
     Handles connection management and message processing for AI chat.
     """
     try:
+        # Initialize AWS clients
+        _initialize_aws_clients()
+        
         route_key = event.get('requestContext', {}).get('routeKey', '')
         connection_id = event.get('requestContext', {}).get('connectionId', '')
         domain_name = event.get('requestContext', {}).get('domainName', '')
@@ -115,6 +131,10 @@ def handle_disconnect(connection_id: str, event: Dict[str, Any]) -> Dict[str, An
         user_id = extract_user_id(event)
         
         logger.info(f"WebSocket disconnection: {connection_id} for user: {user_id}")
+        
+        # Optional: Clean up old chat sessions for this user
+        # This helps manage storage costs by removing very old conversations
+        cleanup_old_sessions(user_id, days_to_keep=30)
         
         metrics.add_metric(name="ChatDisconnections", unit=MetricUnit.Count, value=1)
         
@@ -226,6 +246,47 @@ def save_chat_message(user_id: str, content: str, role: str, session_id: str) ->
         pass
 
 
+def cleanup_old_sessions(user_id: str, days_to_keep: int = 30) -> None:
+    """Clean up old chat sessions to manage storage costs"""
+    try:
+        # Calculate cutoff timestamp (30 days ago)
+        import time
+        cutoff_timestamp = int((time.time() - (days_to_keep * 24 * 60 * 60)) * 1000)
+        
+        # Query old messages for this user
+        response = chat_history_table.query(
+            KeyConditionExpression='userId = :user_id AND #ts < :cutoff',
+            ExpressionAttributeNames={
+                '#ts': 'timestamp'
+            },
+            ExpressionAttributeValues={
+                ':user_id': user_id,
+                ':cutoff': cutoff_timestamp
+            },
+            ProjectionExpression='userId, #ts',  # Only get keys for deletion
+            Limit=100  # Limit to avoid timeout
+        )
+        
+        # Delete old messages in batches
+        old_messages = response.get('Items', [])
+        if old_messages:
+            with chat_history_table.batch_writer() as batch:
+                for message in old_messages:
+                    batch.delete_item(
+                        Key={
+                            'userId': message['userId'],
+                            'timestamp': message['timestamp']
+                        }
+                    )
+            
+            logger.info(f"Cleaned up {len(old_messages)} old chat messages for user {user_id}")
+        
+    except Exception as e:
+        logger.exception(f"Error cleaning up old sessions for user {user_id}: {str(e)}")
+        # Don't fail the disconnect if cleanup fails
+        pass
+
+
 def get_conversation_history(user_id: str, session_id: str, limit: int = 10) -> List[Dict[str, Any]]:
     """Retrieve recent conversation history for context"""
     try:
@@ -288,16 +349,134 @@ def get_relevant_products(query: str, limit: int = 5) -> List[Dict[str, Any]]:
         return []
 
 
+def get_relevant_context_from_knowledge_base(query: str, limit: int = 3) -> List[Dict[str, Any]]:
+    """
+    Get relevant context from S3-based knowledge base using vector similarity.
+    
+    This uses semantic search with embeddings for better relevance.
+    """
+    try:
+        # Generate embedding for the query
+        query_embedding = generate_embedding_for_search(query)
+        if not query_embedding:
+            logger.warning("Could not generate embedding for query, falling back to product search")
+            return []
+        
+        # Import OpenSearch client
+        from opensearchpy import OpenSearch, RequestsHttpConnection
+        from aws_requests_auth.aws_auth import AWSRequestsAuth
+        import boto3
+        
+        # Set up AWS authentication for OpenSearch
+        opensearch_endpoint = os.environ.get('OPENSEARCH_ENDPOINT', '')
+        if not opensearch_endpoint:
+            logger.warning("OpenSearch endpoint not configured")
+            return []
+        
+        host = opensearch_endpoint.replace('https://', '')
+        region = os.environ.get('AWS_REGION', 'us-east-1')
+        service = 'aoss'  # OpenSearch Serverless
+        credentials = boto3.Session().get_credentials()
+        awsauth = AWSRequestsAuth(credentials, region, service)
+        
+        opensearch_client = OpenSearch(
+            hosts=[{'host': host, 'port': 443}],
+            http_auth=awsauth,
+            use_ssl=True,
+            verify_certs=True,
+            connection_class=RequestsHttpConnection,
+            timeout=10
+        )
+        
+        # Search OpenSearch for similar embeddings
+        search_body = {
+            "query": {
+                "knn": {
+                    "embedding": {
+                        "vector": query_embedding,
+                        "k": limit
+                    }
+                }
+            },
+            "_source": ["text", "source", "metadata"],
+            "size": limit
+        }
+        
+        # Execute search
+        response = opensearch_client.search(
+            index="knowledge-base",
+            body=search_body
+        )
+        
+        # Extract relevant context
+        context_chunks = []
+        for hit in response['hits']['hits']:
+            context_chunks.append({
+                'text': hit['_source']['text'],
+                'source': hit['_source'].get('source', 'unknown'),
+                'score': hit['_score'],
+                'metadata': hit['_source'].get('metadata', {})
+            })
+        
+        logger.debug(f"Found {len(context_chunks)} relevant context chunks for query: {query}")
+        
+        return context_chunks
+        
+    except ImportError:
+        logger.warning("OpenSearch client not available, falling back to product search")
+        return []
+    except Exception as e:
+        logger.exception(f"Error retrieving context from knowledge base: {str(e)}")
+        return []
+
+
+def generate_embedding_for_search(text: str) -> Optional[List[float]]:
+    """Generate embedding for search queries using Amazon Bedrock"""
+    try:
+        # Prepare the request for Bedrock
+        request_body = {
+            "inputText": text
+        }
+        
+        # Call Bedrock
+        embedding_model_id = os.environ.get('EMBEDDING_MODEL_ID', 'amazon.titan-embed-text-v1')
+        response = bedrock_runtime.invoke_model(
+            modelId=embedding_model_id,
+            body=json.dumps(request_body),
+            contentType='application/json',
+            accept='application/json'
+        )
+        
+        # Parse response
+        response_body = json.loads(response['body'].read())
+        embedding = response_body.get('embedding', [])
+        
+        logger.debug(f"Generated search embedding with dimension {len(embedding)}")
+        
+        return embedding
+        
+    except Exception as e:
+        logger.exception(f"Error generating search embedding: {str(e)}")
+        return None
+
+
 def generate_ai_response(user_message: str, conversation_history: List[Dict[str, Any]], 
                         product_context: List[Dict[str, Any]]) -> str:
-    """Generate AI response using Amazon Bedrock"""
+    """Generate AI response using Amazon Bedrock with knowledge base context"""
     try:
         # Build context for the AI
         context_parts = []
         
+        # Add knowledge base context (semantic search)
+        knowledge_context = get_relevant_context_from_knowledge_base(user_message)
+        if knowledge_context:
+            context_parts.append("Relevant information from our knowledge base:")
+            for ctx in knowledge_context:
+                context_parts.append(f"- {ctx['text']}")
+        
         # Add product context if available
         if product_context:
-            context_parts.append("Here are some relevant products from our catalog:")
+            context_parts.append("\nRelevant products from our catalog:")
             for product in product_context:
                 context_parts.append(f"- {product.get('name', 'Unknown')}: {product.get('description', 'No description')} (${product.get('price', 'N/A')})")
         
@@ -318,7 +497,7 @@ def generate_ai_response(user_message: str, conversation_history: List[Dict[str,
 
 Customer: {user_message}
 
-Please provide a helpful, friendly response. If the customer is asking about products, use the product information provided above. Keep responses concise but informative. If you don't have specific information, be honest about it and suggest how the customer can get help.
+Please provide a helpful, friendly response. If the customer is asking about products, use the product information provided above. If you have knowledge base information, use that to provide accurate answers. Keep responses concise but informative. If you don't have specific information, be honest about it and suggest how the customer can get help.
 Assistant: """
         
         # Prepare the request for Bedrock

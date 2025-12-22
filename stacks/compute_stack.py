@@ -249,7 +249,23 @@ class ComputeStack(Stack):
                 ],
                 resources=[
                     f"arn:aws:bedrock:{self.region}::foundation-model/anthropic.claude-3-haiku-20240307-v1:0",
-                    f"arn:aws:bedrock:{self.region}::foundation-model/anthropic.claude-3-sonnet-20240229-v1:0"
+                    f"arn:aws:bedrock:{self.region}::foundation-model/anthropic.claude-3-sonnet-20240229-v1:0",
+                    f"arn:aws:bedrock:{self.region}::foundation-model/amazon.titan-embed-text-v1"
+                ]
+            )
+        )
+        
+        # Add S3 permissions for knowledge base
+        self.lambda_execution_role.add_to_policy(
+            iam.PolicyStatement(
+                effect=iam.Effect.ALLOW,
+                actions=[
+                    "s3:GetObject",
+                    "s3:PutObject",
+                    "s3:DeleteObject"
+                ],
+                resources=[
+                    f"{Fn.import_value('E-Com67-KnowledgeBaseBucketArn')}/*"
                 ]
             )
         )
@@ -387,7 +403,9 @@ class ComputeStack(Stack):
             environment={
                 "CHAT_HISTORY_TABLE_NAME": Fn.import_value("E-Com67-ChatHistoryTableName"),
                 "PRODUCTS_TABLE_NAME": Fn.import_value("E-Com67-ProductsTableName"),
+                "OPENSEARCH_ENDPOINT": Fn.import_value("E-Com67-OpenSearchEndpoint"),
                 "BEDROCK_MODEL_ID": "anthropic.claude-3-haiku-20240307-v1:0",
+                "EMBEDDING_MODEL_ID": "amazon.titan-embed-text-v1",
                 "POWERTOOLS_SERVICE_NAME": "chat",
                 "POWERTOOLS_METRICS_NAMESPACE": "E-Com67",
                 "LOG_LEVEL": "INFO"
@@ -395,6 +413,53 @@ class ComputeStack(Stack):
             tracing=_lambda.Tracing.ACTIVE,
             timeout=Duration.seconds(30),
             memory_size=512
+        )
+        
+        # Knowledge processor function for S3-based knowledge base
+        self.knowledge_processor_function = _lambda.Function(
+            self, "KnowledgeProcessorFunction",
+            function_name="e-com67-knowledge-processor",
+            runtime=_lambda.Runtime.PYTHON_3_9,
+            handler="knowledge_processor.handler",
+            code=_lambda.Code.from_asset("lambda/knowledge_processor"),
+            layers=[self.powertools_layer, self.utils_layer, self.opensearch_layer],
+            role=self.lambda_execution_role,
+            environment={
+                "KNOWLEDGE_BASE_BUCKET_NAME": Fn.import_value("E-Com67-KnowledgeBaseBucketName"),
+                "OPENSEARCH_ENDPOINT": Fn.import_value("E-Com67-OpenSearchEndpoint"),
+                "EMBEDDING_MODEL_ID": "amazon.titan-embed-text-v1",
+                "POWERTOOLS_SERVICE_NAME": "knowledge-processor",
+                "POWERTOOLS_METRICS_NAMESPACE": "E-Com67",
+                "LOG_LEVEL": "INFO"
+            },
+            tracing=_lambda.Tracing.ACTIVE,
+            timeout=Duration.minutes(5),
+            memory_size=1024  # More memory for processing large documents
+        )
+        
+        # Configure S3 event trigger for knowledge processor
+        # Note: S3 bucket is in DataStack, so we'll need to configure this trigger
+        # in the API stack or use a custom resource
+        self.data_stack.configure_knowledge_base_notifications(self.knowledge_processor_function)
+        
+        # Knowledge manager function for managing knowledge base documents
+        self.knowledge_manager_function = _lambda.Function(
+            self, "KnowledgeManagerFunction",
+            function_name="e-com67-knowledge-manager",
+            runtime=_lambda.Runtime.PYTHON_3_9,
+            handler="knowledge_manager.handler",
+            code=_lambda.Code.from_asset("lambda/knowledge_manager"),
+            layers=[self.powertools_layer, self.utils_layer],
+            role=self.lambda_execution_role,
+            environment={
+                "KNOWLEDGE_BASE_BUCKET_NAME": Fn.import_value("E-Com67-KnowledgeBaseBucketName"),
+                "POWERTOOLS_SERVICE_NAME": "knowledge-manager",
+                "POWERTOOLS_METRICS_NAMESPACE": "E-Com67",
+                "LOG_LEVEL": "INFO"
+            },
+            tracing=_lambda.Tracing.ACTIVE,
+            timeout=Duration.minutes(2),
+            memory_size=256
         )
 
     def _create_opensearch_functions(self):
@@ -729,6 +794,18 @@ class ComputeStack(Stack):
             self, "ChatFunctionArn",
             value=self.chat_function.function_arn,
             export_name="E-Com67-ChatFunctionArn"
+        )
+        
+        CfnOutput(
+            self, "KnowledgeProcessorFunctionArn",
+            value=self.knowledge_processor_function.function_arn,
+            export_name="E-Com67-KnowledgeProcessorFunctionArn"
+        )
+        
+        CfnOutput(
+            self, "KnowledgeManagerFunctionArn",
+            value=self.knowledge_manager_function.function_arn,
+            export_name="E-Com67-KnowledgeManagerFunctionArn"
         )
         
         # Step Functions exports

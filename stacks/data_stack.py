@@ -12,11 +12,14 @@ from aws_cdk import (
     aws_dynamodb as dynamodb,
     aws_cognito as cognito,
     aws_opensearchserverless as opensearchserverless,
+    aws_s3 as s3,
+    aws_s3_notifications as s3n,
     aws_iam as iam,
     CfnOutput,
     RemovalPolicy,
     Duration,
-    Aws
+    Aws,
+    Fn
 )
 from constructs import Construct
 import json
@@ -34,6 +37,9 @@ class DataStack(Stack):
         self._create_orders_table()
         self._create_chat_history_table()
         
+        # Create S3 bucket for knowledge base
+        self._create_knowledge_base_bucket()
+        
         # Create Cognito User Pool
         self._create_user_pool()
         
@@ -42,6 +48,21 @@ class DataStack(Stack):
         
         # Create cross-stack exports
         self._create_exports()
+
+    def configure_knowledge_base_notifications(self, knowledge_processor_function):
+        """Configure S3 bucket notifications for knowledge base processing"""
+        # Add S3 event notifications for document processing
+        self.knowledge_base_bucket.add_event_notification(
+            s3.EventType.OBJECT_CREATED,
+            s3n.LambdaDestination(knowledge_processor_function),
+            s3.NotificationKeyFilter(prefix="documents/")
+        )
+        
+        self.knowledge_base_bucket.add_event_notification(
+            s3.EventType.OBJECT_REMOVED,
+            s3n.LambdaDestination(knowledge_processor_function),
+            s3.NotificationKeyFilter(prefix="documents/")
+        )
 
     def _create_products_table(self):
         """Create products table with category GSI and DynamoDB Streams"""
@@ -134,6 +155,24 @@ class DataStack(Stack):
             removal_policy=RemovalPolicy.DESTROY  # For development
         )
 
+    def _create_knowledge_base_bucket(self):
+        """Create S3 bucket for knowledge base documents"""
+        self.knowledge_base_bucket = s3.Bucket(
+            self, "KnowledgeBaseBucket",
+            bucket_name=f"e-com67-knowledge-base-{Aws.ACCOUNT_ID}-{Aws.REGION}",
+            versioned=True,
+            encryption=s3.BucketEncryption.S3_MANAGED,
+            block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
+            removal_policy=RemovalPolicy.DESTROY,  # For development
+            lifecycle_rules=[
+                s3.LifecycleRule(
+                    id="DeleteOldVersions",
+                    enabled=True,
+                    noncurrent_version_expiration=Duration.days(30)
+                )
+            ]
+        )
+
     def _create_user_pool(self):
         """Create Cognito User Pool with proper security configuration"""
         # Create User Pool
@@ -201,7 +240,7 @@ class DataStack(Stack):
         )
 
     def _create_opensearch_domain(self):
-        """Create OpenSearch Serverless collection for product search"""
+        """Create OpenSearch Serverless collection for product search and knowledge base"""
 
         # Create encryption policy - must be a single object (not an array) with Rules and AWSOwnedKey
         encryption_policy = {
@@ -259,7 +298,7 @@ class DataStack(Stack):
         self.opensearch_collection = opensearchserverless.CfnCollection(
             self, "ProductSearchCollection",
             name="e-com67-products",
-            description="Product search collection for E-Com67 platform",
+            description="Product search and knowledge base collection for E-Com67 platform",
             type="SEARCH"
         )
 
@@ -303,7 +342,7 @@ class DataStack(Stack):
                         "Principal": [
                             f"arn:aws:iam::{Aws.ACCOUNT_ID}:root"
                         ],
-                        "Description": "Data access for e-com67 products collection"
+                        "Description": "Data access for e-com67 products collection and knowledge base"
                     }
                 ]
             )
@@ -371,6 +410,19 @@ class DataStack(Stack):
             self, "ChatHistoryTableArn",
             value=self.chat_history_table.table_arn,
             export_name="E-Com67-ChatHistoryTableArn"
+        )
+        
+        # S3 bucket exports
+        CfnOutput(
+            self, "KnowledgeBaseBucketName",
+            value=self.knowledge_base_bucket.bucket_name,
+            export_name="E-Com67-KnowledgeBaseBucketName"
+        )
+        
+        CfnOutput(
+            self, "KnowledgeBaseBucketArn",
+            value=self.knowledge_base_bucket.bucket_arn,
+            export_name="E-Com67-KnowledgeBaseBucketArn"
         )
         
         # Cognito exports
