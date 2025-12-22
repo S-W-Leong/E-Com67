@@ -20,6 +20,7 @@ from aws_cdk import (
     aws_stepfunctions_tasks as sfn_tasks,
     aws_sqs as sqs,
     aws_sns as sns,
+    aws_sns_subscriptions as sns_subscriptions,
     aws_secretsmanager as secretsmanager,
     aws_logs as logs,
     aws_opensearchserverless as opensearchserverless,
@@ -52,11 +53,17 @@ class ComputeStack(Stack):
         # Create Lambda functions
         self._create_lambda_functions()
         
+        # Create notification functions
+        self._create_notification_functions()
+        
         # Create OpenSearch functions
         self._create_opensearch_functions()
         
         # Create Step Functions workflow
         self._create_step_functions_workflow()
+        
+        # Configure SNS subscriptions after all functions are created
+        self._configure_sns_subscriptions()
         
         # Create cross-stack exports
         self._create_exports()
@@ -160,10 +167,21 @@ class ComputeStack(Stack):
     def _create_lambda_functions(self):
         """Create Lambda functions with proper IAM roles"""
         
-        # Common Lambda execution role
+        # Common Lambda execution role for core functions
         self.lambda_execution_role = iam.Role(
             self, "LambdaExecutionRole",
             role_name="e-com67-lambda-execution-role",
+            assumed_by=iam.ServicePrincipal("lambda.amazonaws.com"),
+            managed_policies=[
+                iam.ManagedPolicy.from_aws_managed_policy_name("service-role/AWSLambdaBasicExecutionRole"),
+                iam.ManagedPolicy.from_aws_managed_policy_name("AWSXRayDaemonWriteAccess")
+            ]
+        )
+        
+        # Separate role for notification functions to avoid circular dependencies
+        self.notification_execution_role = iam.Role(
+            self, "NotificationExecutionRole",
+            role_name="e-com67-notification-execution-role",
             assumed_by=iam.ServicePrincipal("lambda.amazonaws.com"),
             managed_policies=[
                 iam.ManagedPolicy.from_aws_managed_policy_name("service-role/AWSLambdaBasicExecutionRole"),
@@ -437,10 +455,7 @@ class ComputeStack(Stack):
             memory_size=1024  # More memory for processing large documents
         )
         
-        # Configure S3 event trigger for knowledge processor
-        # Note: S3 bucket is in DataStack, so we'll need to configure this trigger
-        # in the API stack or use a custom resource
-        self.data_stack.configure_knowledge_base_notifications(self.knowledge_processor_function)
+        # Note: S3 bucket notifications will be configured separately to avoid circular dependencies
         
         # Knowledge manager function for managing knowledge base documents
         self.knowledge_manager_function = _lambda.Function(
@@ -460,6 +475,108 @@ class ComputeStack(Stack):
             tracing=_lambda.Tracing.ACTIVE,
             timeout=Duration.minutes(2),
             memory_size=256
+        )
+
+    def _create_notification_functions(self):
+        """Create Lambda functions for notification system"""
+        
+        # Add permissions to notification execution role
+        self.notification_execution_role.add_to_policy(
+            iam.PolicyStatement(
+                effect=iam.Effect.ALLOW,
+                actions=[
+                    "ses:SendEmail",
+                    "ses:SendRawEmail",
+                    "ses:GetSendQuota",
+                    "ses:GetSendStatistics"
+                ],
+                resources=["*"]  # SES doesn't support resource-level permissions for sending
+            )
+        )
+        
+        # Add SNS permissions for SMS
+        self.notification_execution_role.add_to_policy(
+            iam.PolicyStatement(
+                effect=iam.Effect.ALLOW,
+                actions=[
+                    "sns:Publish"
+                ],
+                resources=["*"]  # For SMS, SNS requires wildcard
+            )
+        )
+        
+        # Add DynamoDB permissions for notification tables
+        self.notification_execution_role.add_to_policy(
+            iam.PolicyStatement(
+                effect=iam.Effect.ALLOW,
+                actions=[
+                    "dynamodb:GetItem",
+                    "dynamodb:PutItem",
+                    "dynamodb:UpdateItem",
+                    "dynamodb:Query"
+                ],
+                resources=[
+                    Fn.import_value("E-Com67-NotificationPreferencesTableArn"),
+                    Fn.import_value("E-Com67-NotificationAnalyticsTableArn"),
+                    f"{Fn.import_value('E-Com67-NotificationAnalyticsTableArn')}/index/*"
+                ]
+            )
+        )
+        
+        # Add Lambda invoke permissions for orchestrator
+        self.notification_execution_role.add_to_policy(
+            iam.PolicyStatement(
+                effect=iam.Effect.ALLOW,
+                actions=[
+                    "lambda:InvokeFunction"
+                ],
+                resources=[
+                    f"arn:aws:lambda:{self.region}:{self.account}:function:e-com67-email-notification"
+                ]
+            )
+        )
+        
+        # Email notification function
+        self.email_notification_function = _lambda.Function(
+            self, "EmailNotificationFunction",
+            function_name="e-com67-email-notification",
+            runtime=_lambda.Runtime.PYTHON_3_9,
+            handler="email_notification.handler",
+            code=_lambda.Code.from_asset("lambda/email_notification"),
+            layers=[self.powertools_layer, self.utils_layer],
+            role=self.notification_execution_role,
+            environment={
+                "SENDER_EMAIL": os.environ.get("SENDER_EMAIL", "noreply@e-com67.com"),
+                "SENDER_NAME": os.environ.get("SENDER_NAME", "E-Com67 Platform"),
+                "POWERTOOLS_SERVICE_NAME": "email-notification",
+                "POWERTOOLS_METRICS_NAMESPACE": "E-Com67",
+                "LOG_LEVEL": "INFO"
+            },
+            tracing=_lambda.Tracing.ACTIVE,
+            timeout=Duration.seconds(30),
+            memory_size=256
+        )
+        
+        # Notification orchestrator function
+        self.notification_orchestrator_function = _lambda.Function(
+            self, "NotificationOrchestratorFunction",
+            function_name="e-com67-notification-orchestrator",
+            runtime=_lambda.Runtime.PYTHON_3_9,
+            handler="notification_orchestrator.handler",
+            code=_lambda.Code.from_asset("lambda/notification_orchestrator"),
+            layers=[self.powertools_layer, self.utils_layer],
+            role=self.notification_execution_role,
+            environment={
+                "EMAIL_FUNCTION_NAME": self.email_notification_function.function_name,
+                "NOTIFICATION_PREFERENCES_TABLE": Fn.import_value("E-Com67-NotificationPreferencesTableName"),
+                "NOTIFICATION_ANALYTICS_TABLE": Fn.import_value("E-Com67-NotificationAnalyticsTableName"),
+                "POWERTOOLS_SERVICE_NAME": "notification-orchestrator",
+                "POWERTOOLS_METRICS_NAMESPACE": "E-Com67",
+                "LOG_LEVEL": "INFO"
+            },
+            tracing=_lambda.Tracing.ACTIVE,
+            timeout=Duration.minutes(2),
+            memory_size=512
         )
 
     def _create_opensearch_functions(self):
@@ -719,6 +836,17 @@ class ComputeStack(Stack):
             )
         )
 
+    def _configure_sns_subscriptions(self):
+        """Configure SNS subscriptions after all functions are created"""
+        # Subscribe notification orchestrator to SNS topics
+        self.order_notifications_topic.add_subscription(
+            sns_subscriptions.LambdaSubscription(self.notification_orchestrator_function)
+        )
+        
+        self.admin_notifications_topic.add_subscription(
+            sns_subscriptions.LambdaSubscription(self.notification_orchestrator_function)
+        )
+
     def _create_exports(self):
         """Create CloudFormation exports for cross-stack resource sharing"""
         
@@ -808,6 +936,19 @@ class ComputeStack(Stack):
             export_name="E-Com67-KnowledgeManagerFunctionArn"
         )
         
+        # Notification function exports
+        CfnOutput(
+            self, "EmailNotificationFunctionArn",
+            value=self.email_notification_function.function_arn,
+            export_name="E-Com67-EmailNotificationFunctionArn"
+        )
+        
+        CfnOutput(
+            self, "NotificationOrchestratorFunctionArn",
+            value=self.notification_orchestrator_function.function_arn,
+            export_name="E-Com67-NotificationOrchestratorFunctionArn"
+        )
+        
         # Step Functions exports
         CfnOutput(
             self, "CheckoutStateMachineArn",
@@ -846,6 +987,12 @@ class ComputeStack(Stack):
             self, "LambdaExecutionRoleArn",
             value=self.lambda_execution_role.role_arn,
             export_name="E-Com67-LambdaExecutionRoleArn"
+        )
+        
+        CfnOutput(
+            self, "NotificationExecutionRoleArn",
+            value=self.notification_execution_role.role_arn,
+            export_name="E-Com67-NotificationExecutionRoleArn"
         )
         
         CfnOutput(

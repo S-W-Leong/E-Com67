@@ -36,6 +36,7 @@ class DataStack(Stack):
         self._create_cart_table()
         self._create_orders_table()
         self._create_chat_history_table()
+        self._create_notification_tables()
         
         # Create S3 bucket for knowledge base
         self._create_knowledge_base_bucket()
@@ -49,20 +50,7 @@ class DataStack(Stack):
         # Create cross-stack exports
         self._create_exports()
 
-    def configure_knowledge_base_notifications(self, knowledge_processor_function):
-        """Configure S3 bucket notifications for knowledge base processing"""
-        # Add S3 event notifications for document processing
-        self.knowledge_base_bucket.add_event_notification(
-            s3.EventType.OBJECT_CREATED,
-            s3n.LambdaDestination(knowledge_processor_function),
-            s3.NotificationKeyFilter(prefix="documents/")
-        )
-        
-        self.knowledge_base_bucket.add_event_notification(
-            s3.EventType.OBJECT_REMOVED,
-            s3n.LambdaDestination(knowledge_processor_function),
-            s3.NotificationKeyFilter(prefix="documents/")
-        )
+    # Note: S3 bucket notifications are configured in ComputeStack to avoid circular dependencies
 
     def _create_products_table(self):
         """Create products table with category GSI and DynamoDB Streams"""
@@ -153,6 +141,48 @@ class DataStack(Stack):
             billing_mode=dynamodb.BillingMode.PAY_PER_REQUEST,
             point_in_time_recovery=True,
             removal_policy=RemovalPolicy.DESTROY  # For development
+        )
+
+    def _create_notification_tables(self):
+        """Create notification-related tables"""
+        # Notification preferences table
+        self.notification_preferences_table = dynamodb.Table(
+            self, "NotificationPreferencesTable",
+            table_name="e-com67-notification-preferences",
+            partition_key=dynamodb.Attribute(
+                name="userId",
+                type=dynamodb.AttributeType.STRING
+            ),
+            billing_mode=dynamodb.BillingMode.PAY_PER_REQUEST,
+            point_in_time_recovery=True,
+            removal_policy=RemovalPolicy.DESTROY  # For development
+        )
+        
+        # Notification analytics table
+        self.notification_analytics_table = dynamodb.Table(
+            self, "NotificationAnalyticsTable",
+            table_name="e-com67-notification-analytics",
+            partition_key=dynamodb.Attribute(
+                name="notificationId",
+                type=dynamodb.AttributeType.STRING
+            ),
+            billing_mode=dynamodb.BillingMode.PAY_PER_REQUEST,
+            point_in_time_recovery=True,
+            removal_policy=RemovalPolicy.DESTROY  # For development
+        )
+        
+        # Add GSI for analytics queries by user and date
+        self.notification_analytics_table.add_global_secondary_index(
+            index_name="userId-timestamp-index",
+            partition_key=dynamodb.Attribute(
+                name="userId",
+                type=dynamodb.AttributeType.STRING
+            ),
+            sort_key=dynamodb.Attribute(
+                name="timestamp",
+                type=dynamodb.AttributeType.NUMBER
+            ),
+            projection_type=dynamodb.ProjectionType.ALL
         )
 
     def _create_knowledge_base_bucket(self):
@@ -410,6 +440,31 @@ class DataStack(Stack):
             self, "ChatHistoryTableArn",
             value=self.chat_history_table.table_arn,
             export_name="E-Com67-ChatHistoryTableArn"
+        )
+        
+        # Notification table exports
+        CfnOutput(
+            self, "NotificationPreferencesTableName",
+            value=self.notification_preferences_table.table_name,
+            export_name="E-Com67-NotificationPreferencesTableName"
+        )
+        
+        CfnOutput(
+            self, "NotificationPreferencesTableArn",
+            value=self.notification_preferences_table.table_arn,
+            export_name="E-Com67-NotificationPreferencesTableArn"
+        )
+        
+        CfnOutput(
+            self, "NotificationAnalyticsTableName",
+            value=self.notification_analytics_table.table_name,
+            export_name="E-Com67-NotificationAnalyticsTableName"
+        )
+        
+        CfnOutput(
+            self, "NotificationAnalyticsTableArn",
+            value=self.notification_analytics_table.table_arn,
+            export_name="E-Com67-NotificationAnalyticsTableArn"
         )
         
         # S3 bucket exports
