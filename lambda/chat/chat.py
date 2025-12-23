@@ -31,7 +31,7 @@ apigateway_management = None  # Will be initialized per request
 # Environment variables
 CHAT_HISTORY_TABLE_NAME = os.environ.get('CHAT_HISTORY_TABLE_NAME')
 PRODUCTS_TABLE_NAME = os.environ.get('PRODUCTS_TABLE_NAME')
-BEDROCK_MODEL_ID = os.environ.get('BEDROCK_MODEL_ID', 'anthropic.claude-3-haiku-20240307-v1:0')
+BEDROCK_MODEL_ID = os.environ.get('BEDROCK_MODEL_ID', 'amazon.titan-text-express-v1')
 
 # DynamoDB tables (will be initialized lazily)
 chat_history_table = None

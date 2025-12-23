@@ -34,8 +34,11 @@ Both applications connect to the same backend infrastructure but provide role-sp
 - Account settings and preferences
 
 ### AI Chat Support
-- Real-time chat widget for customer support
-- AI-powered product recommendations
+- Real-time chat widget with WebSocket connection
+- AI-powered product recommendations in chat
+- Typing indicators and message history
+- Chat session persistence across page refreshes
+- Minimizable and closable chat window
 - Order assistance and FAQ support
 
 ## Technology Stack
@@ -93,16 +96,21 @@ The built files will be in the `dist` directory.
 ```
 src/
 ├── components/          # Reusable UI components
-│   └── Layout.jsx      # Main layout with navigation and footer
+│   ├── Layout.jsx      # Main layout with navigation and footer
+│   ├── ChatWidget.jsx  # AI chat widget component
+│   ├── ProductCard.jsx # Product display card
+│   └── SearchBar.jsx   # Search with autocomplete
 ├── pages/              # Page components
 │   ├── Home.jsx        # Landing page with featured products
 │   ├── Products.jsx    # Product listing with filters
 │   ├── ProductDetail.jsx # Individual product details
 │   ├── Cart.jsx        # Shopping cart management
 │   ├── Checkout.jsx    # Checkout process
-│   ├── Orders.jsx      # Order history
+│   ├── Orders.jsx      # Order history and detail view
 │   └── Profile.jsx     # User profile management
-├── services/           # API and utility services (future)
+├── services/           # API and utility services
+│   ├── api.js         # REST API service layer
+│   └── chat.js        # WebSocket chat service
 ├── context/            # React context providers (future)
 ├── App.jsx            # Main app component with routing
 ├── main.jsx           # App entry point with Amplify config
@@ -149,47 +157,57 @@ All API calls are authenticated using JWT tokens from Cognito when required.
 
 ### Products Page (`/products`)
 - Product grid and list views
+- Real-time search with autocomplete suggestions
 - Category and price filtering
 - Sorting options (name, price, rating)
-- Search functionality
+- Pagination with "Load More" functionality
+- Add to cart directly from listings
 - Responsive design for mobile
-- **Status**: ✅ Implemented
+- **Status**: ✅ Implemented (Phase 9.3)
 
 ### Product Detail Page (`/products/:id`)
 - Detailed product information
-- Image gallery
-- Add to cart functionality
-- Customer reviews and ratings
-- Related products
-- **Status**: 🔄 Placeholder (Phase 9.3)
+- Full product images and details
+- Add to cart functionality with quantity selector
+- Stock availability indicators
+- Buy now option
+- Related products section
+- **Status**: ✅ Implemented (Phase 9.3)
 
 ### Shopping Cart (`/cart`)
-- Cart item management
-- Quantity updates and removal
-- Price calculations and totals
-- Proceed to checkout
-- **Status**: 🔄 Placeholder (Phase 9.4)
+- Cart item management with real-time updates
+- Quantity controls (increase/decrease)
+- Remove items with confirmation
+- Price calculations with tax
+- Order summary with sticky sidebar
+- Empty cart state with CTA
+- **Status**: ✅ Implemented (Phase 9.4)
 
 ### Checkout (`/checkout`)
-- Shipping information form
-- Payment method selection
-- Order review and confirmation
-- Stripe payment integration
-- **Status**: 🔄 Placeholder (Phase 9.4)
+- Two-step checkout process (Shipping → Payment)
+- Comprehensive shipping information form with validation
+- Stripe Elements payment integration
+- Order summary with cart items
+- Free shipping calculation (orders over $50)
+- Progress indicator
+- **Status**: ✅ Implemented (Phase 9.4)
 
 ### Order History (`/orders`)
-- List of customer orders
-- Order status tracking
-- Order details and receipts
-- Reorder functionality
-- **Status**: 🔄 Placeholder (Phase 9.5)
+- List of customer orders with pagination
+- Order status tracking with visual badges
+- Detailed order view with items and shipping
+- Order detail routing (`/orders/:id`)
+- Success message display from checkout
+- Empty state for no orders
+- **Status**: ✅ Implemented (Phase 9.5)
 
 ### Profile (`/profile`)
-- Account information management
-- Password change
-- Notification preferences
-- Address book
-- **Status**: 🔄 Placeholder (Phase 9.5)
+- Three-tab interface (Profile, Security, Notifications)
+- Account information management with Cognito integration
+- Password change with validation
+- Email and SMS notification preferences
+- Success/error message handling
+- **Status**: ✅ Implemented (Phase 9.5)
 
 ## Styling
 
@@ -261,29 +279,41 @@ The customer application will be deployed to:
 - [x] Set up product listing with filters and search
 - [x] Configure AWS Amplify authentication
 
-### Phase 9.3: 🔄 Next
-- [ ] Implement product detail pages
-- [ ] Add product image galleries
-- [ ] Create add-to-cart functionality
-- [ ] Set up product reviews and ratings
+### Phase 9.3: ✅ Completed
+- [x] Implement product browsing with grid/list layouts
+- [x] Add real-time search with autocomplete
+- [x] Create ProductCard component for reusability
+- [x] Implement product detail pages with full details
+- [x] Add add-to-cart functionality with quantity management
+- [x] Set up pagination with "Load More"
+- [x] Add category navigation and filtering
+- [x] Implement related products feature
 
-### Phase 9.4: 🔄 Upcoming
-- [ ] Build shopping cart management
-- [ ] Implement checkout process
-- [ ] Integrate Stripe payment processing
-- [ ] Add order confirmation flow
+### Phase 9.4: ✅ Completed
+- [x] Build shopping cart management with item updates
+- [x] Implement two-step checkout process
+- [x] Integrate Stripe Elements for payment processing
+- [x] Add shipping information form with validation
+- [x] Implement order summary and totals calculation
+- [x] Add free shipping threshold logic
 
-### Phase 9.5: 🔄 Upcoming
-- [ ] Create customer account management
-- [ ] Implement order history and tracking
-- [ ] Add profile management features
-- [ ] Set up notification preferences
+### Phase 9.5: ✅ Completed
+- [x] Create customer account management
+- [x] Implement order history and tracking
+- [x] Add profile management features with Cognito integration
+- [x] Set up notification preferences
+- [x] Implement order detail view component
+- [x] Add password change functionality
 
-### Phase 9.6: 🔄 Future
-- [ ] Integrate AI chat widget
-- [ ] Add real-time messaging
-- [ ] Implement product recommendations
-- [ ] Set up chat history management
+### Phase 9.6: ✅ Completed
+- [x] Integrate AI chat widget with floating button
+- [x] Add real-time WebSocket messaging
+- [x] Implement typing indicators and message display
+- [x] Set up chat history management with localStorage
+- [x] Add chat session persistence and restoration
+- [x] Implement product recommendation display in chat
+- [x] Add minimize/maximize chat functionality
+- [x] Configure reconnection with exponential backoff
 
 ## Testing
 

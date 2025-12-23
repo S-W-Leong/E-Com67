@@ -1,90 +1,36 @@
-import React, { useState, useEffect } from 'react'
-import { Link } from 'react-router-dom'
-import { Star, Filter, Grid, List } from 'lucide-react'
+import React, { useState, useEffect, useCallback } from 'react'
+import { useSearchParams } from 'react-router-dom'
+import { Grid, List, AlertCircle } from 'lucide-react'
+import { productApi, cartApi } from '../services/api'
+import ProductCard from '../components/ProductCard'
+import SearchBar from '../components/SearchBar'
+import { fetchAuthSession } from 'aws-amplify/auth'
 
+/**
+ * Products Page
+ * Main product browsing interface with search, filtering, and pagination
+ * Implements Requirements 2.2, 3.1, 3.3, 4.1 from design.md
+ */
 const Products = () => {
+  const [searchParams, setSearchParams] = useSearchParams()
+
   const [products, setProducts] = useState([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
   const [viewMode, setViewMode] = useState('grid')
+  const [lastKey, setLastKey] = useState(null)
+  const [hasMore, setHasMore] = useState(true)
+  const [loadingMore, setLoadingMore] = useState(false)
+
+  // Filters state
   const [filters, setFilters] = useState({
-    category: '',
-    priceRange: '',
-    sortBy: 'name'
+    category: searchParams.get('category') || '',
+    priceRange: searchParams.get('priceRange') || '',
+    sortBy: searchParams.get('sortBy') || 'name',
+    searchQuery: searchParams.get('q') || ''
   })
 
-  // Mock products data - in real app, this would come from API
-  const mockProducts = [
-    {
-      id: 1,
-      name: 'Premium Wireless Headphones',
-      price: 199.99,
-      category: 'Electronics',
-      image: 'https://via.placeholder.com/300x300?text=Headphones',
-      rating: 4.8,
-      reviews: 124,
-      description: 'High-quality wireless headphones with noise cancellation'
-    },
-    {
-      id: 2,
-      name: 'Smart Fitness Watch',
-      price: 299.99,
-      category: 'Electronics',
-      image: 'https://via.placeholder.com/300x300?text=Watch',
-      rating: 4.6,
-      reviews: 89,
-      description: 'Advanced fitness tracking with heart rate monitor'
-    },
-    {
-      id: 3,
-      name: 'Organic Cotton T-Shirt',
-      price: 29.99,
-      category: 'Clothing',
-      image: 'https://via.placeholder.com/300x300?text=T-Shirt',
-      rating: 4.9,
-      reviews: 156,
-      description: '100% organic cotton, comfortable and sustainable'
-    },
-    {
-      id: 4,
-      name: 'Professional Camera',
-      price: 899.99,
-      category: 'Electronics',
-      image: 'https://via.placeholder.com/300x300?text=Camera',
-      rating: 4.7,
-      reviews: 67,
-      description: 'Professional DSLR camera with advanced features'
-    },
-    {
-      id: 5,
-      name: 'Running Shoes',
-      price: 129.99,
-      category: 'Clothing',
-      image: 'https://via.placeholder.com/300x300?text=Shoes',
-      rating: 4.5,
-      reviews: 203,
-      description: 'Comfortable running shoes with excellent support'
-    },
-    {
-      id: 6,
-      name: 'Bluetooth Speaker',
-      price: 79.99,
-      category: 'Electronics',
-      image: 'https://via.placeholder.com/300x300?text=Speaker',
-      rating: 4.4,
-      reviews: 98,
-      description: 'Portable Bluetooth speaker with rich sound quality'
-    }
-  ]
-
-  useEffect(() => {
-    // Simulate API call
-    setTimeout(() => {
-      setProducts(mockProducts)
-      setLoading(false)
-    }, 1000)
-  }, [])
-
-  const categories = ['All', 'Electronics', 'Clothing', 'Home', 'Sports']
+  const categories = ['All', 'Electronics', 'Clothing', 'Home', 'Sports', 'Books', 'Toys']
   const priceRanges = [
     { label: 'All Prices', value: '' },
     { label: 'Under $50', value: '0-50' },
@@ -93,11 +39,90 @@ const Products = () => {
     { label: 'Over $500', value: '500+' }
   ]
 
-  const filteredProducts = products.filter(product => {
-    if (filters.category && filters.category !== 'All' && product.category !== filters.category) {
-      return false
+  /**
+   * Fetch products from API
+   * Handles both initial load and pagination
+   */
+  const fetchProducts = useCallback(async (append = false) => {
+    try {
+      if (!append) {
+        setLoading(true)
+        setError(null)
+      } else {
+        setLoadingMore(true)
+      }
+
+      const params = {
+        limit: 12
+      }
+
+      // Add category filter if set
+      if (filters.category && filters.category !== 'All') {
+        params.category = filters.category
+      }
+
+      // Add pagination key if loading more
+      if (append && lastKey) {
+        params.lastKey = lastKey
+      }
+
+      let response
+
+      // Use search API if there's a search query
+      if (filters.searchQuery) {
+        response = await productApi.searchProducts(filters.searchQuery, params)
+      } else {
+        response = await productApi.getProducts(params)
+      }
+
+      const newProducts = response.products || []
+
+      if (append) {
+        setProducts(prev => [...prev, ...newProducts])
+      } else {
+        setProducts(newProducts)
+      }
+
+      setLastKey(response.lastKey)
+      setHasMore(!!response.lastKey)
+
+    } catch (err) {
+      console.error('Error fetching products:', err)
+      setError(err.response?.data?.error?.message || 'Failed to load products. Please try again.')
+    } finally {
+      setLoading(false)
+      setLoadingMore(false)
     }
-    
+  }, [filters.category, filters.searchQuery, lastKey])
+
+  /**
+   * Initial load and filter changes
+   */
+  useEffect(() => {
+    setLastKey(null)
+    setHasMore(true)
+    fetchProducts(false)
+  }, [filters.category, filters.searchQuery])
+
+  /**
+   * Update URL search params when filters change
+   */
+  useEffect(() => {
+    const params = {}
+    if (filters.category && filters.category !== 'All') params.category = filters.category
+    if (filters.priceRange) params.priceRange = filters.priceRange
+    if (filters.sortBy !== 'name') params.sortBy = filters.sortBy
+    if (filters.searchQuery) params.q = filters.searchQuery
+
+    setSearchParams(params)
+  }, [filters, setSearchParams])
+
+  /**
+   * Client-side filtering and sorting
+   * Applied to the fetched products for price range and sorting
+   */
+  const filteredProducts = products.filter(product => {
+    // Price range filter
     if (filters.priceRange) {
       const [min, max] = filters.priceRange.split('-').map(Number)
       if (max) {
@@ -106,21 +131,72 @@ const Products = () => {
         if (product.price < 500) return false
       }
     }
-    
     return true
   }).sort((a, b) => {
+    // Sorting
     switch (filters.sortBy) {
       case 'price-low':
         return a.price - b.price
       case 'price-high':
         return b.price - a.price
       case 'rating':
-        return b.rating - a.rating
+        return (b.rating || 0) - (a.rating || 0)
       default:
         return a.name.localeCompare(b.name)
     }
   })
 
+  /**
+   * Handle search submission
+   */
+  const handleSearch = (query) => {
+    setFilters(prev => ({ ...prev, searchQuery: query }))
+  }
+
+  /**
+   * Handle add to cart
+   */
+  const handleAddToCart = async (product) => {
+    try {
+      // Check if user is authenticated
+      await fetchAuthSession()
+
+      await cartApi.addToCart(product.productId, 1)
+
+      // Show success feedback (you could use a toast notification here)
+      alert(`${product.name} added to cart!`)
+    } catch (error) {
+      if (error.name === 'UserUnAuthenticatedException') {
+        alert('Please sign in to add items to your cart')
+      } else {
+        console.error('Error adding to cart:', error)
+        alert('Failed to add item to cart. Please try again.')
+      }
+    }
+  }
+
+  /**
+   * Load more products (pagination)
+   */
+  const handleLoadMore = () => {
+    if (!loadingMore && hasMore) {
+      fetchProducts(true)
+    }
+  }
+
+  /**
+   * Clear all filters
+   */
+  const clearFilters = () => {
+    setFilters({
+      category: '',
+      priceRange: '',
+      sortBy: 'name',
+      searchQuery: ''
+    })
+  }
+
+  // Loading state
   if (loading) {
     return (
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -131,29 +207,72 @@ const Products = () => {
     )
   }
 
+  // Error state
+  if (error) {
+    return (
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div className="bg-red-50 border border-red-200 rounded-lg p-6 flex items-start gap-3">
+          <AlertCircle className="h-6 w-6 text-red-600 flex-shrink-0 mt-0.5" />
+          <div>
+            <h3 className="text-red-800 font-semibold mb-1">Error Loading Products</h3>
+            <p className="text-red-700">{error}</p>
+            <button
+              onClick={() => fetchProducts(false)}
+              className="mt-3 text-red-600 hover:text-red-700 font-medium text-sm"
+            >
+              Try Again
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       {/* Header */}
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-gray-900 mb-4">Products</h1>
-        <p className="text-gray-600">Discover our wide range of quality products</p>
+        <p className="text-gray-600 mb-6">Discover our wide range of quality products</p>
+
+        {/* Search Bar */}
+        <SearchBar
+          onSearch={handleSearch}
+          initialValue={filters.searchQuery}
+        />
       </div>
+
+      {/* Active Search Query */}
+      {filters.searchQuery && (
+        <div className="mb-6 flex items-center gap-2">
+          <span className="text-gray-600">Searching for:</span>
+          <span className="bg-blue-100 text-blue-800 px-3 py-1 rounded-full font-medium">
+            {filters.searchQuery}
+          </span>
+          <button
+            onClick={() => setFilters(prev => ({ ...prev, searchQuery: '' }))}
+            className="text-blue-600 hover:text-blue-700 text-sm font-medium"
+          >
+            Clear search
+          </button>
+        </div>
+      )}
 
       {/* Filters and Controls */}
       <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-8">
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
           {/* Filters */}
-          <div className="flex flex-col sm:flex-row gap-4">
+          <div className="flex flex-col sm:flex-row gap-4 flex-wrap">
             {/* Category Filter */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Category</label>
               <select
-                value={filters.category}
-                onChange={(e) => setFilters({...filters, category: e.target.value})}
+                value={filters.category || 'All'}
+                onChange={(e) => setFilters({...filters, category: e.target.value === 'All' ? '' : e.target.value})}
                 className="border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
                 {categories.map(category => (
-                  <option key={category} value={category === 'All' ? '' : category}>
+                  <option key={category} value={category}>
                     {category}
                   </option>
                 ))}
@@ -190,6 +309,18 @@ const Products = () => {
                 <option value="rating">Rating</option>
               </select>
             </div>
+
+            {/* Clear Filters */}
+            {(filters.category || filters.priceRange || filters.sortBy !== 'name') && (
+              <div className="flex items-end">
+                <button
+                  onClick={clearFilters}
+                  className="text-sm text-blue-600 hover:text-blue-700 font-medium"
+                >
+                  Clear filters
+                </button>
+              </div>
+            )}
           </div>
 
           {/* View Mode Toggle */}
@@ -198,12 +329,14 @@ const Products = () => {
             <button
               onClick={() => setViewMode('grid')}
               className={`p-2 rounded-md ${viewMode === 'grid' ? 'bg-blue-100 text-blue-600' : 'text-gray-400 hover:text-gray-600'}`}
+              title="Grid view"
             >
               <Grid className="h-5 w-5" />
             </button>
             <button
               onClick={() => setViewMode('list')}
               className={`p-2 rounded-md ${viewMode === 'list' ? 'bg-blue-100 text-blue-600' : 'text-gray-400 hover:text-gray-600'}`}
+              title="List view"
             >
               <List className="h-5 w-5" />
             </button>
@@ -214,83 +347,52 @@ const Products = () => {
       {/* Results Count */}
       <div className="mb-6">
         <p className="text-gray-600">
-          Showing {filteredProducts.length} of {products.length} products
+          Showing {filteredProducts.length} {filteredProducts.length === 1 ? 'product' : 'products'}
         </p>
       </div>
 
       {/* Products Grid/List */}
-      <div className={viewMode === 'grid' 
-        ? 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6'
-        : 'space-y-6'
-      }>
-        {filteredProducts.map((product) => (
-          <div
-            key={product.id}
-            className={`bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden hover:shadow-md transition-shadow ${
-              viewMode === 'list' ? 'flex' : ''
-            }`}
-          >
-            <img
-              src={product.image}
-              alt={product.name}
-              className={viewMode === 'list' 
-                ? 'w-48 h-48 object-cover flex-shrink-0'
-                : 'w-full h-64 object-cover'
-              }
-            />
-            <div className="p-6 flex-1">
-              <div className="flex items-start justify-between mb-2">
-                <h3 className="text-lg font-semibold text-gray-900">
-                  {product.name}
-                </h3>
-                <span className="text-sm text-gray-500 bg-gray-100 px-2 py-1 rounded">
-                  {product.category}
-                </span>
-              </div>
-              
-              <p className="text-gray-600 text-sm mb-3">
-                {product.description}
-              </p>
-              
-              <div className="flex items-center mb-3">
-                <div className="flex items-center">
-                  {[...Array(5)].map((_, i) => (
-                    <Star
-                      key={i}
-                      className={`h-4 w-4 ${
-                        i < Math.floor(product.rating)
-                          ? 'text-yellow-400 fill-current'
-                          : 'text-gray-300'
-                      }`}
-                    />
-                  ))}
-                </div>
-                <span className="text-sm text-gray-600 ml-2">
-                  {product.rating} ({product.reviews} reviews)
-                </span>
-              </div>
-              
-              <div className="flex items-center justify-between">
-                <span className="text-2xl font-bold text-blue-600">
-                  ${product.price}
-                </span>
-                <Link
-                  to={`/products/${product.id}`}
-                  className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 transition-colors"
-                >
-                  View Details
-                </Link>
-              </div>
-            </div>
+      {filteredProducts.length > 0 ? (
+        <>
+          <div className={viewMode === 'grid'
+            ? 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6'
+            : 'space-y-6'
+          }>
+            {filteredProducts.map((product) => (
+              <ProductCard
+                key={product.productId}
+                product={product}
+                viewMode={viewMode}
+                onAddToCart={handleAddToCart}
+              />
+            ))}
           </div>
-        ))}
-      </div>
 
-      {filteredProducts.length === 0 && (
+          {/* Load More Button */}
+          {hasMore && (
+            <div className="mt-8 text-center">
+              <button
+                onClick={handleLoadMore}
+                disabled={loadingMore}
+                className="bg-blue-600 text-white px-6 py-3 rounded-md hover:bg-blue-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed"
+              >
+                {loadingMore ? (
+                  <span className="flex items-center gap-2">
+                    <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+                    Loading...
+                  </span>
+                ) : (
+                  'Load More Products'
+                )}
+              </button>
+            </div>
+          )}
+        </>
+      ) : (
         <div className="text-center py-12">
           <p className="text-gray-500 text-lg">No products found matching your criteria.</p>
           <button
-            onClick={() => setFilters({ category: '', priceRange: '', sortBy: 'name' })}
+            onClick={clearFilters}
             className="mt-4 text-blue-600 hover:text-blue-700 font-medium"
           >
             Clear all filters

@@ -224,8 +224,8 @@ class DataStack(Stack):
             # JWT token expiration settings
             user_verification=cognito.UserVerificationConfig(
                 email_subject="E-Com67 - Verify your email",
-                email_body="Welcome to E-Com67! Please verify your email by clicking: {##Verify Email##}",
-                email_style=cognito.VerificationEmailStyle.LINK
+                email_body="Welcome to E-Com67! Your verification code is: {####}",
+                email_style=cognito.VerificationEmailStyle.CODE
             ),
             # Standard attributes
             standard_attributes=cognito.StandardAttributes(
@@ -259,7 +259,16 @@ class DataStack(Stack):
                 scopes=[cognito.OAuthScope.EMAIL, cognito.OAuthScope.OPENID, cognito.OAuthScope.PROFILE]
             )
         )
-        
+
+        # Create User Pool Domain (required for OAuth flows)
+        self.user_pool_domain = cognito.UserPoolDomain(
+            self, "UserPoolDomain",
+            user_pool=self.user_pool,
+            cognito_domain=cognito.CognitoDomainOptions(
+                domain_prefix="e-com67-users"  # Must be globally unique across AWS
+            )
+        )
+
         # Create admin user group
         self.admin_group = cognito.CfnUserPoolGroup(
             self, "AdminGroup",

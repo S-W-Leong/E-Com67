@@ -21,7 +21,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'lambda', 'chat'))
 # Mock environment variables
 os.environ['CHAT_HISTORY_TABLE_NAME'] = 'test-chat-history'
 os.environ['PRODUCTS_TABLE_NAME'] = 'test-products'
-os.environ['BEDROCK_MODEL_ID'] = 'anthropic.claude-3-haiku-20240307-v1:0'
+os.environ['BEDROCK_MODEL_ID'] = 'amazon.titan-text-express-v1'
 os.environ['AWS_DEFAULT_REGION'] = 'us-east-1'
 os.environ['POWERTOOLS_METRICS_NAMESPACE'] = 'E-Com67-Test'
 os.environ['POWERTOOLS_SERVICE_NAME'] = 'chat-test'

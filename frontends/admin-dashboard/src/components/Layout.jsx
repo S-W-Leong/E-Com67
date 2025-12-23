@@ -9,7 +9,7 @@ import {
   X
 } from 'lucide-react'
 
-const Layout = ({ children, user, signOut }) => {
+const Layout = ({ children, signOut }) => {
   const location = useLocation()
   const [sidebarOpen, setSidebarOpen] = React.useState(false)
 
@@ -32,7 +32,7 @@ const Layout = ({ children, user, signOut }) => {
       )}
 
       {/* Sidebar */}
-      <div className={`fixed inset-y-0 left-0 z-50 w-64 bg-white shadow-lg transform transition-transform duration-300 ease-in-out lg:translate-x-0 lg:static lg:inset-0 ${
+      <div className={`fixed inset-y-0 left-0 z-50 w-64 bg-white shadow-lg transform transition-transform duration-300 ease-in-out lg:translate-x-0 ${
         sidebarOpen ? 'translate-x-0' : '-translate-x-full'
       }`}>
         <div className="flex items-center justify-between h-16 px-6 border-b border-gray-200">
@@ -75,15 +75,10 @@ const Layout = ({ children, user, signOut }) => {
           <div className="flex items-center mb-3">
             <div className="flex-shrink-0">
               <div className="h-8 w-8 bg-primary-600 rounded-full flex items-center justify-center">
-                <span className="text-sm font-medium text-white">
-                  {user?.username?.charAt(0).toUpperCase() || 'A'}
-                </span>
+                <span className="text-sm font-medium text-white">A</span>
               </div>
             </div>
             <div className="ml-3">
-              <p className="text-sm font-medium text-gray-700 truncate">
-                {user?.username || 'Admin User'}
-              </p>
               <p className="text-xs text-gray-500">Administrator</p>
             </div>
           </div>
@@ -111,7 +106,7 @@ const Layout = ({ children, user, signOut }) => {
             
             <div className="flex items-center space-x-4">
               <span className="text-sm text-gray-500">
-                Welcome back, {user?.username || 'Admin'}
+                Welcome back, Admin
               </span>
             </div>
           </div>

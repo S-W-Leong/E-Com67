@@ -110,6 +110,16 @@ class ComputeStack(Stack):
             description="OpenSearch Python client for search functionality",
             removal_policy=self.removal_policy
         )
+        
+        # Strands SDK layer for AI agent enhancement
+        self.strands_layer = _lambda.LayerVersion(
+            self, "StrandsLayer",
+            layer_version_name="e-com67-strands",
+            code=_lambda.Code.from_asset("layers/strands"),
+            compatible_runtimes=[_lambda.Runtime.PYTHON_3_9, _lambda.Runtime.PYTHON_3_10],
+            description="Strands SDK for enhanced AI agent capabilities",
+            removal_policy=self.removal_policy
+        )
 
     def _create_messaging_infrastructure(self):
         """Create SQS queues and SNS topics for messaging"""
@@ -266,8 +276,8 @@ class ComputeStack(Stack):
                     "bedrock:InvokeModel"
                 ],
                 resources=[
-                    f"arn:aws:bedrock:{self.region}::foundation-model/anthropic.claude-3-haiku-20240307-v1:0",
-                    f"arn:aws:bedrock:{self.region}::foundation-model/anthropic.claude-3-sonnet-20240229-v1:0",
+                    f"arn:aws:bedrock:{self.region}::foundation-model/amazon.titan-text-express-v1",
+                    f"arn:aws:bedrock:{self.region}::foundation-model/amazon.titan-text-lite-v1",
                     f"arn:aws:bedrock:{self.region}::foundation-model/amazon.titan-embed-text-v1"
                 ]
             )
@@ -410,20 +420,26 @@ class ComputeStack(Stack):
         )
         
         # Chat function for AI-powered customer support
+        # Note: Uses Python 3.10 runtime to support Strands SDK requirements
         self.chat_function = _lambda.Function(
             self, "ChatFunction",
             function_name="e-com67-chat",
-            runtime=_lambda.Runtime.PYTHON_3_9,
+            runtime=_lambda.Runtime.PYTHON_3_10,
             handler="chat.handler",
             code=_lambda.Code.from_asset("lambda/chat"),
-            layers=[self.powertools_layer, self.utils_layer],
+            layers=[self.powertools_layer, self.utils_layer, self.strands_layer],
             role=self.lambda_execution_role,
             environment={
                 "CHAT_HISTORY_TABLE_NAME": Fn.import_value("E-Com67-ChatHistoryTableName"),
                 "PRODUCTS_TABLE_NAME": Fn.import_value("E-Com67-ProductsTableName"),
                 "OPENSEARCH_ENDPOINT": Fn.import_value("E-Com67-OpenSearchEndpoint"),
-                "BEDROCK_MODEL_ID": "anthropic.claude-3-haiku-20240307-v1:0",
+                "BEDROCK_MODEL_ID": "amazon.titan-text-express-v1",
                 "EMBEDDING_MODEL_ID": "amazon.titan-embed-text-v1",
+                "BEDROCK_TEMPERATURE": "0.7",
+                "BEDROCK_MAX_TOKENS": "4096",
+                "BEDROCK_STREAMING": "false",
+                "DEPLOYMENT_STAGE": "development",
+                "PLATFORM_VERSION": "1.0.0",
                 "POWERTOOLS_SERVICE_NAME": "chat",
                 "POWERTOOLS_METRICS_NAMESPACE": "E-Com67",
                 "LOG_LEVEL": "INFO"
@@ -873,6 +889,12 @@ class ComputeStack(Stack):
             self, "OpenSearchLayerArn",
             value=self.opensearch_layer.layer_version_arn,
             export_name="E-Com67-OpenSearchLayerArn"
+        )
+        
+        CfnOutput(
+            self, "StrandsLayerArn",
+            value=self.strands_layer.layer_version_arn,
+            export_name="E-Com67-StrandsLayerArn"
         )
         
         # Lambda function exports

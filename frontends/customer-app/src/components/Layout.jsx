@@ -3,6 +3,7 @@ import { Outlet, Link, useNavigate } from 'react-router-dom'
 import { useAuthenticator } from '@aws-amplify/ui-react'
 import { ShoppingCart, User, Search, Menu, X } from 'lucide-react'
 import { useState } from 'react'
+import ChatWidget from './ChatWidget'
 
 const Layout = () => {
   const { user, signOut } = useAuthenticator((context) => [context.user])
@@ -186,7 +187,7 @@ const Layout = () => {
                 Your trusted e-commerce platform for quality products and exceptional service.
               </p>
             </div>
-            
+
             <div>
               <h4 className="text-sm font-semibold text-gray-900 mb-4">Shop</h4>
               <ul className="space-y-2 text-sm text-gray-600">
@@ -195,7 +196,7 @@ const Layout = () => {
                 <li><Link to="/products?category=clothing" className="hover:text-blue-600 transition-colors">Clothing</Link></li>
               </ul>
             </div>
-            
+
             <div>
               <h4 className="text-sm font-semibold text-gray-900 mb-4">Account</h4>
               <ul className="space-y-2 text-sm text-gray-600">
@@ -204,7 +205,7 @@ const Layout = () => {
                 <li><Link to="/cart" className="hover:text-blue-600 transition-colors">Shopping Cart</Link></li>
               </ul>
             </div>
-            
+
             <div>
               <h4 className="text-sm font-semibold text-gray-900 mb-4">Support</h4>
               <ul className="space-y-2 text-sm text-gray-600">
@@ -214,12 +215,15 @@ const Layout = () => {
               </ul>
             </div>
           </div>
-          
+
           <div className="border-t border-gray-200 mt-8 pt-8 text-center text-sm text-gray-600">
             <p>&copy; 2024 E-Com67. All rights reserved.</p>
           </div>
         </div>
       </footer>
+
+      {/* AI Chat Widget */}
+      <ChatWidget />
     </div>
   )
 }
