@@ -71,7 +71,7 @@ class ApiStack(Stack):
             description="E-Com67 Platform REST API",
             # CORS configuration for frontend integration
             default_cors_preflight_options=apigw.CorsOptions(
-                allow_origins=apigw.Cors.ALL_ORIGINS,  # In production, restrict to specific domains
+                allow_origins=apigw.Cors.ALL_ORIGINS,  # Allow all origins (development)
                 allow_methods=apigw.Cors.ALL_METHODS,
                 allow_headers=[
                     "Content-Type",
@@ -81,7 +81,7 @@ class ApiStack(Stack):
                     "X-Amz-Security-Token",
                     "X-Amz-User-Agent"
                 ],
-                allow_credentials=True,
+                allow_credentials=False,  # Must be False when using ALL_ORIGINS
                 max_age=Duration.hours(1)
             ),
             # Enable CloudWatch logging
@@ -109,6 +109,38 @@ class ApiStack(Stack):
             # Enable API key requirement for future use
             cloud_watch_role=True,
             endpoint_types=[apigw.EndpointType.REGIONAL]
+        )
+
+        # Add gateway responses for CORS on error responses
+        self.rest_api.add_gateway_response(
+            "Unauthorized",
+            type=apigw.ResponseType.UNAUTHORIZED,
+            response_headers={
+                "Access-Control-Allow-Origin": "'*'",
+                "Access-Control-Allow-Headers": "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,X-Amz-User-Agent'",
+                "Access-Control-Allow-Methods": "'OPTIONS,GET,PUT,POST,DELETE,PATCH,HEAD'"
+            }
+        )
+
+        self.rest_api.add_gateway_response(
+            "Forbidden",
+            type=apigw.ResponseType.ACCESS_DENIED,
+            response_headers={
+                "Access-Control-Allow-Origin": "'*'",
+                "Access-Control-Allow-Headers": "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,X-Amz-User-Agent'",
+                "Access-Control-Allow-Methods": "'OPTIONS,GET,PUT,POST,DELETE,PATCH,HEAD'"
+            }
+        )
+
+        # Add gateway response for 5XX errors to include CORS headers
+        self.rest_api.add_gateway_response(
+            "ServerError",
+            type=apigw.ResponseType.DEFAULT_5_XX,
+            response_headers={
+                "Access-Control-Allow-Origin": "'*'",
+                "Access-Control-Allow-Headers": "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,X-Amz-User-Agent'",
+                "Access-Control-Allow-Methods": "'OPTIONS,GET,PUT,POST,DELETE,PATCH,HEAD'"
+            }
         )
 
     def _create_cognito_authorizer(self):
@@ -154,26 +186,16 @@ class ApiStack(Stack):
             "GET",
             product_integration,
             authorization_type=apigw.AuthorizationType.NONE,
-            api_key_required=False,
-            method_responses=[
-                apigw.MethodResponse(
-                    status_code="200",
-                    response_parameters={
-                        "method.response.header.Access-Control-Allow-Origin": True
-                    }
-                ),
-                apigw.MethodResponse(status_code="400"),
-                apigw.MethodResponse(status_code="500")
-            ]
+            api_key_required=False
         )
         
         # POST /products - Create product (admin only)
+        # Note: Admin role validation should be done in the Lambda function
         products_resource.add_method(
             "POST",
             product_integration,
             authorizer=self.cognito_authorizer,
             authorization_type=apigw.AuthorizationType.COGNITO,
-            authorization_scopes=["aws.cognito.signin.user.admin"],
             method_responses=[
                 apigw.MethodResponse(
                     status_code="201",
@@ -181,10 +203,18 @@ class ApiStack(Stack):
                         "method.response.header.Access-Control-Allow-Origin": True
                     }
                 ),
-                apigw.MethodResponse(status_code="400"),
-                apigw.MethodResponse(status_code="401"),
-                apigw.MethodResponse(status_code="403"),
-                apigw.MethodResponse(status_code="500")
+                apigw.MethodResponse(
+                    status_code="401",
+                    response_parameters={
+                        "method.response.header.Access-Control-Allow-Origin": True
+                    }
+                ),
+                apigw.MethodResponse(
+                    status_code="403",
+                    response_parameters={
+                        "method.response.header.Access-Control-Allow-Origin": True
+                    }
+                )
             ]
         )
         
@@ -196,60 +226,25 @@ class ApiStack(Stack):
             "GET",
             product_integration,
             authorization_type=apigw.AuthorizationType.NONE,
-            api_key_required=False,
-            method_responses=[
-                apigw.MethodResponse(
-                    status_code="200",
-                    response_parameters={
-                        "method.response.header.Access-Control-Allow-Origin": True
-                    }
-                ),
-                apigw.MethodResponse(status_code="404"),
-                apigw.MethodResponse(status_code="500")
-            ]
+            api_key_required=False
         )
         
         # PUT /products/{id} - Update product (admin only)
+        # Note: Admin role validation should be done in the Lambda function
         product_id_resource.add_method(
             "PUT",
             product_integration,
             authorizer=self.cognito_authorizer,
-            authorization_type=apigw.AuthorizationType.COGNITO,
-            authorization_scopes=["aws.cognito.signin.user.admin"],
-            method_responses=[
-                apigw.MethodResponse(
-                    status_code="200",
-                    response_parameters={
-                        "method.response.header.Access-Control-Allow-Origin": True
-                    }
-                ),
-                apigw.MethodResponse(status_code="400"),
-                apigw.MethodResponse(status_code="401"),
-                apigw.MethodResponse(status_code="403"),
-                apigw.MethodResponse(status_code="404"),
-                apigw.MethodResponse(status_code="500")
-            ]
+            authorization_type=apigw.AuthorizationType.COGNITO
         )
-        
+
         # DELETE /products/{id} - Delete product (admin only)
+        # Note: Admin role validation should be done in the Lambda function
         product_id_resource.add_method(
             "DELETE",
             product_integration,
             authorizer=self.cognito_authorizer,
-            authorization_type=apigw.AuthorizationType.COGNITO,
-            authorization_scopes=["aws.cognito.signin.user.admin"],
-            method_responses=[
-                apigw.MethodResponse(
-                    status_code="204",
-                    response_parameters={
-                        "method.response.header.Access-Control-Allow-Origin": True
-                    }
-                ),
-                apigw.MethodResponse(status_code="401"),
-                apigw.MethodResponse(status_code="403"),
-                apigw.MethodResponse(status_code="404"),
-                apigw.MethodResponse(status_code="500")
-            ]
+            authorization_type=apigw.AuthorizationType.COGNITO
         )
 
     def _create_cart_endpoints(self):
@@ -277,17 +272,7 @@ class ApiStack(Stack):
             "GET",
             cart_integration,
             authorizer=self.cognito_authorizer,
-            authorization_type=apigw.AuthorizationType.COGNITO,
-            method_responses=[
-                apigw.MethodResponse(
-                    status_code="200",
-                    response_parameters={
-                        "method.response.header.Access-Control-Allow-Origin": True
-                    }
-                ),
-                apigw.MethodResponse(status_code="401"),
-                apigw.MethodResponse(status_code="500")
-            ]
+            authorization_type=apigw.AuthorizationType.COGNITO
         )
         
         # POST /cart - Add/update cart item (authenticated)
@@ -295,20 +280,7 @@ class ApiStack(Stack):
             "POST",
             cart_integration,
             authorizer=self.cognito_authorizer,
-            authorization_type=apigw.AuthorizationType.COGNITO,
-            method_responses=[
-                apigw.MethodResponse(
-                    status_code="200",
-                    response_parameters={
-                        "method.response.header.Access-Control-Allow-Origin": True
-                    }
-                ),
-                apigw.MethodResponse(status_code="400"),
-                apigw.MethodResponse(status_code="401"),
-                apigw.MethodResponse(status_code="404"),
-                apigw.MethodResponse(status_code="409"),
-                apigw.MethodResponse(status_code="500")
-            ]
+            authorization_type=apigw.AuthorizationType.COGNITO
         )
         
         # DELETE /cart - Remove cart item (authenticated)
@@ -316,18 +288,7 @@ class ApiStack(Stack):
             "DELETE",
             cart_integration,
             authorizer=self.cognito_authorizer,
-            authorization_type=apigw.AuthorizationType.COGNITO,
-            method_responses=[
-                apigw.MethodResponse(
-                    status_code="204",
-                    response_parameters={
-                        "method.response.header.Access-Control-Allow-Origin": True
-                    }
-                ),
-                apigw.MethodResponse(status_code="401"),
-                apigw.MethodResponse(status_code="404"),
-                apigw.MethodResponse(status_code="500")
-            ]
+            authorization_type=apigw.AuthorizationType.COGNITO
         )
 
     def _create_order_endpoints(self):
@@ -390,9 +351,6 @@ class ApiStack(Stack):
     "executionArn": "$inputRoot.executionArn",
     "startDate": "$inputRoot.startDate"
 }'''
-                        },
-                        response_parameters={
-                            "method.response.header.Access-Control-Allow-Origin": "'*'"
                         }
                     ),
                     apigw.IntegrationResponse(
@@ -421,17 +379,7 @@ class ApiStack(Stack):
             "GET",
             orders_integration,
             authorizer=self.cognito_authorizer,
-            authorization_type=apigw.AuthorizationType.COGNITO,
-            method_responses=[
-                apigw.MethodResponse(
-                    status_code="200",
-                    response_parameters={
-                        "method.response.header.Access-Control-Allow-Origin": True
-                    }
-                ),
-                apigw.MethodResponse(status_code="401"),
-                apigw.MethodResponse(status_code="500")
-            ]
+            authorization_type=apigw.AuthorizationType.COGNITO
         )
         
         # POST /orders - Place order (authenticated, triggers Step Functions)
@@ -439,18 +387,7 @@ class ApiStack(Stack):
             "POST",
             checkout_integration,
             authorizer=self.cognito_authorizer,
-            authorization_type=apigw.AuthorizationType.COGNITO,
-            method_responses=[
-                apigw.MethodResponse(
-                    status_code="200",
-                    response_parameters={
-                        "method.response.header.Access-Control-Allow-Origin": True
-                    }
-                ),
-                apigw.MethodResponse(status_code="400"),
-                apigw.MethodResponse(status_code="401"),
-                apigw.MethodResponse(status_code="500")
-            ]
+            authorization_type=apigw.AuthorizationType.COGNITO
         )
         
         # Create /orders/{id} resource
@@ -461,18 +398,7 @@ class ApiStack(Stack):
             "GET",
             orders_integration,
             authorizer=self.cognito_authorizer,
-            authorization_type=apigw.AuthorizationType.COGNITO,
-            method_responses=[
-                apigw.MethodResponse(
-                    status_code="200",
-                    response_parameters={
-                        "method.response.header.Access-Control-Allow-Origin": True
-                    }
-                ),
-                apigw.MethodResponse(status_code="401"),
-                apigw.MethodResponse(status_code="404"),
-                apigw.MethodResponse(status_code="500")
-            ]
+            authorization_type=apigw.AuthorizationType.COGNITO
         )
 
     def _create_search_endpoints(self):
@@ -500,17 +426,7 @@ class ApiStack(Stack):
             "GET",
             search_integration,
             authorization_type=apigw.AuthorizationType.NONE,
-            api_key_required=False,
-            method_responses=[
-                apigw.MethodResponse(
-                    status_code="200",
-                    response_parameters={
-                        "method.response.header.Access-Control-Allow-Origin": True
-                    }
-                ),
-                apigw.MethodResponse(status_code="400"),
-                apigw.MethodResponse(status_code="500")
-            ]
+            api_key_required=False
         )
         
         # Create /search/suggest resource for autocomplete
@@ -521,17 +437,7 @@ class ApiStack(Stack):
             "GET",
             search_integration,
             authorization_type=apigw.AuthorizationType.NONE,
-            api_key_required=False,
-            method_responses=[
-                apigw.MethodResponse(
-                    status_code="200",
-                    response_parameters={
-                        "method.response.header.Access-Control-Allow-Origin": True
-                    }
-                ),
-                apigw.MethodResponse(status_code="400"),
-                apigw.MethodResponse(status_code="500")
-            ]
+            api_key_required=False
         )
 
     def _create_admin_endpoints(self):
@@ -570,69 +476,34 @@ class ApiStack(Stack):
         admin_products_resource = admin_resource.add_resource("products")
         
         # GET /admin/products - List all products with admin details (admin only)
+        # Note: Admin role validation should be done in the Lambda function
         admin_products_resource.add_method(
             "GET",
             admin_product_integration,
             authorizer=self.cognito_authorizer,
-            authorization_type=apigw.AuthorizationType.COGNITO,
-            authorization_scopes=["aws.cognito.signin.user.admin"],
-            method_responses=[
-                apigw.MethodResponse(
-                    status_code="200",
-                    response_parameters={
-                        "method.response.header.Access-Control-Allow-Origin": True
-                    }
-                ),
-                apigw.MethodResponse(status_code="401"),
-                apigw.MethodResponse(status_code="403"),
-                apigw.MethodResponse(status_code="500")
-            ]
+            authorization_type=apigw.AuthorizationType.COGNITO
         )
         
         # Create /admin/orders resource
         admin_orders_resource = admin_resource.add_resource("orders")
         
         # GET /admin/orders - List all orders with admin details (admin only)
+        # Note: Admin role validation should be done in the Lambda function
         admin_orders_resource.add_method(
             "GET",
             admin_orders_integration,
             authorizer=self.cognito_authorizer,
-            authorization_type=apigw.AuthorizationType.COGNITO,
-            authorization_scopes=["aws.cognito.signin.user.admin"],
-            method_responses=[
-                apigw.MethodResponse(
-                    status_code="200",
-                    response_parameters={
-                        "method.response.header.Access-Control-Allow-Origin": True
-                    }
-                ),
-                apigw.MethodResponse(status_code="401"),
-                apigw.MethodResponse(status_code="403"),
-                apigw.MethodResponse(status_code="500")
-            ]
+            authorization_type=apigw.AuthorizationType.COGNITO
         )
         
         # PUT /admin/orders/{id} - Update order status (admin only)
+        # Note: Admin role validation should be done in the Lambda function
         admin_order_id_resource = admin_orders_resource.add_resource("{id}")
         admin_order_id_resource.add_method(
             "PUT",
             admin_orders_integration,
             authorizer=self.cognito_authorizer,
-            authorization_type=apigw.AuthorizationType.COGNITO,
-            authorization_scopes=["aws.cognito.signin.user.admin"],
-            method_responses=[
-                apigw.MethodResponse(
-                    status_code="200",
-                    response_parameters={
-                        "method.response.header.Access-Control-Allow-Origin": True
-                    }
-                ),
-                apigw.MethodResponse(status_code="400"),
-                apigw.MethodResponse(status_code="401"),
-                apigw.MethodResponse(status_code="403"),
-                apigw.MethodResponse(status_code="404"),
-                apigw.MethodResponse(status_code="500")
-            ]
+            authorization_type=apigw.AuthorizationType.COGNITO
         )
 
     def _create_websocket_api(self):

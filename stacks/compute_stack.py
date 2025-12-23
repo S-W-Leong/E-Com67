@@ -326,6 +326,14 @@ class ComputeStack(Stack):
             },
             tracing=_lambda.Tracing.ACTIVE
         )
+
+        # Grant API Gateway permission to invoke this function
+        self.product_crud_function.add_permission(
+            "AllowApiGatewayInvoke",
+            principal=iam.ServicePrincipal("apigateway.amazonaws.com"),
+            action="lambda:InvokeFunction",
+            source_arn=f"arn:aws:execute-api:{self.region}:{self.account}:*/*/*"
+        )
         
         # Cart function
         self.cart_function = _lambda.Function(
@@ -417,6 +425,14 @@ class ComputeStack(Stack):
             },
             tracing=_lambda.Tracing.ACTIVE,
             timeout=Duration.seconds(30)
+        )
+
+        # Grant API Gateway permission to invoke this function
+        self.orders_function.add_permission(
+            "AllowApiGatewayInvoke",
+            principal=iam.ServicePrincipal("apigateway.amazonaws.com"),
+            action="lambda:InvokeFunction",
+            source_arn=f"arn:aws:execute-api:{self.region}:{self.account}:*/*/*"
         )
         
         # Chat function for AI-powered customer support
@@ -562,7 +578,7 @@ class ComputeStack(Stack):
             layers=[self.powertools_layer, self.utils_layer],
             role=self.notification_execution_role,
             environment={
-                "SENDER_EMAIL": os.environ.get("SENDER_EMAIL", "noreply@e-com67.com"),
+                "SENDER_EMAIL": os.environ.get("SENDER_EMAIL", "mt-swleong@axrail.com"),
                 "SENDER_NAME": os.environ.get("SENDER_NAME", "E-Com67 Platform"),
                 "POWERTOOLS_SERVICE_NAME": "email-notification",
                 "POWERTOOLS_METRICS_NAMESPACE": "E-Com67",

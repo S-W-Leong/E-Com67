@@ -472,7 +472,7 @@ def search_orders():
         user_id = app.current_event.request_context.authorizer.get('claims', {}).get('sub')
         if not user_id:
             raise BadRequestError("User ID not found in token")
-        
+
         # Get query parameters
         query_params = app.current_event.query_string_parameters or {}
         status_filter = query_params.get('status')
@@ -480,26 +480,136 @@ def search_orders():
         date_to = query_params.get('dateTo')
         limit = int(query_params.get('limit', 20))
         next_token = query_params.get('nextToken')
-        
+
         # Convert date strings to timestamps if provided
         date_from_ts = int(date_from) if date_from else None
         date_to_ts = int(date_to) if date_to else None
-        
+
         # Validate limit
         if limit < 1 or limit > 100:
             raise BadRequestError("Limit must be between 1 and 100")
-        
+
         result = OrdersService.search_orders(
             user_id, status_filter, date_from_ts, date_to_ts, limit, next_token
         )
-        
+
         return result
-        
+
     except BadRequestError as e:
         logger.warning("Bad request for search orders", extra={"error": str(e)})
         raise e
     except Exception as e:
         logger.exception("Unexpected error in search orders")
+        raise e
+
+
+# Admin API endpoints
+@app.get("/admin/orders")
+@tracer.capture_method
+def get_admin_orders():
+    """Get all orders for admin view with pagination"""
+    try:
+        # Get query parameters
+        query_params = app.current_event.query_string_parameters or {}
+        limit = int(query_params.get('limit', 20))
+        next_token = query_params.get('nextToken')
+        status_filter = query_params.get('status')
+
+        # Validate limit
+        if limit < 1 or limit > 100:
+            raise BadRequestError("Limit must be between 1 and 100")
+
+        orders_table = get_orders_table()
+
+        # Build scan parameters for admin view (scans all orders)
+        scan_params = {
+            'Limit': limit
+        }
+
+        # Add status filter if provided
+        if status_filter:
+            scan_params['FilterExpression'] = Attr('status').eq(status_filter)
+
+        # Add pagination token if provided
+        if next_token:
+            try:
+                import base64
+                decoded_key = json.loads(base64.b64decode(next_token).decode('utf-8'))
+                scan_params['ExclusiveStartKey'] = decoded_key
+            except Exception as e:
+                logger.warning("Invalid pagination token", extra={"token": next_token, "error": str(e)})
+                raise BadRequestError("Invalid pagination token")
+
+        # Execute scan
+        response = orders_table.scan(**scan_params)
+
+        orders = response.get('Items', [])
+
+        # Convert Decimal objects to float
+        orders = OrdersService._convert_decimals_to_float(orders)
+
+        # Format timestamps
+        for order in orders:
+            order['createdAtFormatted'] = format_timestamp(order['createdAt'])
+            order['updatedAtFormatted'] = format_timestamp(order['updatedAt'])
+
+        # Create pagination token for next page
+        next_token_response = None
+        if 'LastEvaluatedKey' in response:
+            import base64
+            next_token_response = base64.b64encode(
+                json.dumps(response['LastEvaluatedKey'], default=str).encode('utf-8')
+            ).decode('utf-8')
+
+        logger.info("Admin orders retrieved", extra={
+            "orders_count": len(orders),
+            "has_more": next_token_response is not None
+        })
+        metrics.add_metric(name="AdminOrdersRetrieved", unit=MetricUnit.Count, value=len(orders))
+
+        return {
+            'orders': orders,
+            'nextToken': next_token_response,
+            'hasMore': next_token_response is not None,
+            'totalReturned': len(orders)
+        }
+
+    except BadRequestError as e:
+        logger.warning("Bad request for admin get orders", extra={"error": str(e)})
+        raise e
+    except Exception as e:
+        logger.exception("Unexpected error in admin get orders")
+        raise e
+
+
+@app.put("/admin/orders/<order_id>")
+@tracer.capture_method
+def admin_update_order_status(order_id: str):
+    """Update order status (admin only)"""
+    try:
+        # Parse request body
+        try:
+            body = json.loads(app.current_event.body)
+        except json.JSONDecodeError:
+            raise BadRequestError("Invalid JSON in request body")
+
+        new_status = body.get('status')
+        if not new_status:
+            raise BadRequestError("Status is required")
+
+        # Admin can update to any valid status
+        result = OrdersService.update_order_status(order_id, new_status, admin_update=True)
+
+        return result
+
+    except NotFoundError as e:
+        logger.warning("Order not found for admin status update", extra={"order_id": order_id, "error": str(e)})
+        raise e
+    except BadRequestError as e:
+        logger.warning("Bad request for admin update order status", extra={"error": str(e)})
+        raise e
+    except Exception as e:
+        logger.exception("Unexpected error in admin update order status")
         raise e
 
 

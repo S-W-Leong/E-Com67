@@ -43,7 +43,17 @@ metrics = Metrics()
 
 # Initialize DynamoDB
 dynamodb = boto3.resource('dynamodb')
-products_table = dynamodb.Table(os.environ['PRODUCTS_TABLE_NAME'])
+products_table = None
+
+def get_products_table():
+    """Get products table, initializing if needed"""
+    global products_table
+    if products_table is None:
+        table_name = os.environ.get('PRODUCTS_TABLE_NAME')
+        if not table_name:
+            raise BusinessLogicError("PRODUCTS_TABLE_NAME environment variable not set")
+        products_table = dynamodb.Table(table_name)
+    return products_table
 
 
 class ProductService:
@@ -79,7 +89,7 @@ class ProductService:
         
         try:
             # Store in DynamoDB
-            products_table.put_item(Item=product_item)
+            get_products_table().put_item(Item=product_item)
             
             logger.info("Product created successfully", extra={"product_id": product_id})
             metrics.add_metric(name="ProductCreated", unit=MetricUnit.Count, value=1)
@@ -100,7 +110,7 @@ class ProductService:
         logger.info("Retrieving product", extra={"product_id": product_id})
         
         try:
-            response = products_table.get_item(Key={'productId': product_id})
+            response = get_products_table().get_item(Key={'productId': product_id})
             
             if 'Item' not in response:
                 logger.info("Product not found", extra={"product_id": product_id})
@@ -138,7 +148,7 @@ class ProductService:
                 if last_key:
                     query_kwargs['ExclusiveStartKey'] = {'category': category, 'productId': last_key}
                 
-                response = products_table.query(**query_kwargs)
+                response = get_products_table().query(**query_kwargs)
             else:
                 # Scan all products
                 scan_kwargs = {
@@ -150,7 +160,7 @@ class ProductService:
                 if last_key:
                     scan_kwargs['ExclusiveStartKey'] = {'productId': last_key}
                 
-                response = products_table.scan(**scan_kwargs)
+                response = get_products_table().scan(**scan_kwargs)
             
             products = response.get('Items', [])
             
@@ -203,7 +213,7 @@ class ProductService:
             expression_values[attr_value] = value
         
         try:
-            response = products_table.update_item(
+            response = get_products_table().update_item(
                 Key={'productId': product_id},
                 UpdateExpression=update_expression,
                 ExpressionAttributeNames=expression_names,
@@ -237,7 +247,7 @@ class ProductService:
         logger.info("Deleting product", extra={"product_id": product_id})
         
         try:
-            response = products_table.update_item(
+            response = get_products_table().update_item(
                 Key={'productId': product_id},
                 UpdateExpression="SET isActive = :inactive, updatedAt = :updated_at",
                 ExpressionAttributeValues={
@@ -263,7 +273,20 @@ class ProductService:
             raise BusinessLogicError(f"Failed to delete product: {str(e)}")
 
 
-def create_error_response(status_code: int, error_code: str, message: str, details: Optional[Dict] = None) -> Dict[str, Any]:
+def get_cors_headers(event: Dict[str, Any]) -> Dict[str, str]:
+    """
+    Get CORS headers for the response.
+    Returns wildcard origin for development (no credentials support).
+    """
+    return {
+        "Content-Type": "application/json",
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Amz-Date, X-Api-Key, X-Amz-Security-Token"
+    }
+
+
+def create_error_response(status_code: int, error_code: str, message: str, details: Optional[Dict] = None, event: Optional[Dict] = None) -> Dict[str, Any]:
     """Create standardized error response"""
     error_response = {
         "error": {
@@ -272,32 +295,22 @@ def create_error_response(status_code: int, error_code: str, message: str, detai
             "timestamp": format_timestamp(time.time())
         }
     }
-    
+
     if details:
         error_response["error"]["details"] = details
-    
+
     return {
         "statusCode": status_code,
-        "headers": {
-            "Content-Type": "application/json",
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-            "Access-Control-Allow-Headers": "Content-Type, Authorization"
-        },
+        "headers": get_cors_headers(event or {}),
         "body": json.dumps(error_response)
     }
 
 
-def create_success_response(data: Any, status_code: int = 200) -> Dict[str, Any]:
+def create_success_response(data: Any, status_code: int = 200, event: Optional[Dict] = None) -> Dict[str, Any]:
     """Create standardized success response"""
     return {
         "statusCode": status_code,
-        "headers": {
-            "Content-Type": "application/json",
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-            "Access-Control-Allow-Headers": "Content-Type, Authorization"
-        },
+        "headers": get_cors_headers(event or {}),
         "body": json.dumps(data)
     }
 
@@ -307,88 +320,89 @@ def create_success_response(data: Any, status_code: int = 200) -> Dict[str, Any]
 @metrics.log_metrics(capture_cold_start_metric=True)
 def handler(event, context):
     """Lambda handler for product CRUD operations"""
-    
+
     logger.info("Product CRUD function invoked", extra={"event": event})
-    
+
     try:
         http_method = event.get('httpMethod', '')
         path_parameters = event.get('pathParameters') or {}
         query_parameters = event.get('queryStringParameters') or {}
-        
+
         # Handle OPTIONS request for CORS
         if http_method == 'OPTIONS':
-            return create_success_response({}, 200)
-        
+            return create_success_response({}, 200, event)
+
         # Route based on HTTP method and path
         if http_method == 'POST':
             # Create product
             try:
                 body = json.loads(event.get('body', '{}'))
                 product = ProductService.create_product(body)
-                return create_success_response(product, 201)
+                return create_success_response(product, 201, event)
             except json.JSONDecodeError:
-                return create_error_response(400, "INVALID_JSON", "Invalid JSON in request body")
+                return create_error_response(400, "INVALID_JSON", "Invalid JSON in request body", event=event)
             except ValidationError as e:
-                return create_error_response(400, "VALIDATION_ERROR", str(e))
+                return create_error_response(400, "VALIDATION_ERROR", str(e), event=event)
             except BusinessLogicError as e:
-                return create_error_response(500, "BUSINESS_LOGIC_ERROR", str(e))
-        
+                return create_error_response(500, "BUSINESS_LOGIC_ERROR", str(e), event=event)
+
         elif http_method == 'GET':
             product_id = path_parameters.get('id')
-            
+
             if product_id:
                 # Get single product
                 product = ProductService.get_product(product_id)
                 if product:
-                    return create_success_response(product)
+                    return create_success_response(product, 200, event)
                 else:
-                    return create_error_response(404, "PRODUCT_NOT_FOUND", "Product not found")
+                    return create_error_response(404, "PRODUCT_NOT_FOUND", "Product not found", event=event)
             else:
                 # List products with optional filtering
                 category = query_parameters.get('category')
                 limit = int(query_parameters.get('limit', 50))
                 last_key = query_parameters.get('lastKey')
-                
+
                 result = ProductService.list_products(category, limit, last_key)
-                return create_success_response(result)
-        
+                logger.info("Products listed successfully", extra={"result": result})
+                return create_success_response(result, 200, event)
+
         elif http_method == 'PUT':
             # Update product
             product_id = path_parameters.get('id')
             if not product_id:
-                return create_error_response(400, "MISSING_PRODUCT_ID", "Product ID is required")
-            
+                return create_error_response(400, "MISSING_PRODUCT_ID", "Product ID is required", event=event)
+
             try:
                 body = json.loads(event.get('body', '{}'))
                 updated_product = ProductService.update_product(product_id, body)
                 if updated_product:
-                    return create_success_response(updated_product)
+                    return create_success_response(updated_product, 200, event)
                 else:
-                    return create_error_response(404, "PRODUCT_NOT_FOUND", "Product not found")
+                    return create_error_response(404, "PRODUCT_NOT_FOUND", "Product not found", event=event)
             except json.JSONDecodeError:
-                return create_error_response(400, "INVALID_JSON", "Invalid JSON in request body")
+                return create_error_response(400, "INVALID_JSON", "Invalid JSON in request body", event=event)
             except ValidationError as e:
-                return create_error_response(400, "VALIDATION_ERROR", str(e))
+                return create_error_response(400, "VALIDATION_ERROR", str(e), event=event)
             except BusinessLogicError as e:
-                return create_error_response(500, "BUSINESS_LOGIC_ERROR", str(e))
-        
+                return create_error_response(500, "BUSINESS_LOGIC_ERROR", str(e), event=event)
+
         elif http_method == 'DELETE':
             # Delete product
             product_id = path_parameters.get('id')
             if not product_id:
-                return create_error_response(400, "MISSING_PRODUCT_ID", "Product ID is required")
-            
+                return create_error_response(400, "MISSING_PRODUCT_ID", "Product ID is required", event=event)
+
             success = ProductService.delete_product(product_id)
             if success:
-                return create_success_response({"message": "Product deleted successfully"})
+                return create_success_response({"message": "Product deleted successfully"}, 200, event)
             else:
-                return create_error_response(404, "PRODUCT_NOT_FOUND", "Product not found")
-        
+                return create_error_response(404, "PRODUCT_NOT_FOUND", "Product not found", event=event)
+
         else:
-            return create_error_response(405, "METHOD_NOT_ALLOWED", f"HTTP method {http_method} not allowed")
-    
+            return create_error_response(405, "METHOD_NOT_ALLOWED", f"HTTP method {http_method} not allowed", event=event)
+
     except Exception as e:
         logger.exception("Unexpected error in product CRUD function")
         metrics.add_metric(name="ProductCrudUnexpectedError", unit=MetricUnit.Count, value=1)
-        
-        return create_error_response(500, "INTERNAL_SERVER_ERROR", "An unexpected error occurred")
+
+        return create_error_response(500, "INTERNAL_SERVER_ERROR", "An unexpected error occurred", event=event)

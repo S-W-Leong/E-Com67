@@ -13,10 +13,12 @@ class ApiClient {
     
     // Request interceptor to add auth token
     this.client.interceptors.request.use(
-      (config) => {
-        const token = this.getAuthToken?.()
-        if (token) {
-          config.headers.Authorization = `Bearer ${token}`
+      async (config) => {
+        if (this.getAuthToken) {
+          const token = await this.getAuthToken()
+          if (token) {
+            config.headers.Authorization = `Bearer ${token}`
+          }
         }
         return config
       },

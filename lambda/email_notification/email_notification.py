@@ -28,7 +28,7 @@ tracer = Tracer()
 metrics = Metrics(namespace="E-Com67")
 
 # Configuration
-SENDER_EMAIL = os.environ.get('SENDER_EMAIL', 'noreply@e-com67.com')
+SENDER_EMAIL = os.environ.get('SENDER_EMAIL', 'mt-swleong@axrail.com')
 SENDER_NAME = os.environ.get('SENDER_NAME', 'E-Com67 Platform')
 
 
