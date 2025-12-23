@@ -27,6 +27,7 @@ from aws_lambda_powertools.event_handler.exceptions import BadRequestError, NotF
 from utils.validators import ValidationError
 from utils.exceptions import BusinessLogicError
 from utils.formatters import format_timestamp
+from utils.cors import ensure_cors_headers
 
 logger = Logger()
 tracer = Tracer()
@@ -613,14 +614,6 @@ def admin_update_order_status(order_id: str):
         raise e
 
 
-# CORS headers for all responses
-CORS_HEADERS = {
-    'Content-Type': 'application/json',
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token',
-    'Access-Control-Allow-Methods': 'GET,PUT,POST,DELETE,OPTIONS'
-}
-
 @logger.inject_lambda_context
 @tracer.capture_lambda_handler
 @metrics.log_metrics(capture_cold_start_metric=True)
@@ -633,19 +626,12 @@ def handler(event, context):
         response = app.resolve(event, context)
         
         # Ensure CORS headers are always present in successful responses
-        if 'headers' not in response:
-            response['headers'] = {}
-        
-        # Add CORS headers to the response
-        response['headers'].update(CORS_HEADERS)
+        response = ensure_cors_headers(response)
         
         return response
     except Exception as e:
         logger.exception("Unexpected error in orders function")
         metrics.add_metric(name="OrdersFunctionError", unit=MetricUnit.Count, value=1)
         
-        return {
-            'statusCode': 500,
-            'headers': CORS_HEADERS,
-            'body': json.dumps({'error': 'Internal server error'})
-        }
+        from utils.cors import create_error_response
+        return create_error_response(500, "INTERNAL_SERVER_ERROR", "Internal server error")
