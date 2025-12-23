@@ -613,6 +613,14 @@ def admin_update_order_status(order_id: str):
         raise e
 
 
+# CORS headers for all responses
+CORS_HEADERS = {
+    'Content-Type': 'application/json',
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Headers': 'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token',
+    'Access-Control-Allow-Methods': 'GET,PUT,POST,DELETE,OPTIONS'
+}
+
 @logger.inject_lambda_context
 @tracer.capture_lambda_handler
 @metrics.log_metrics(capture_cold_start_metric=True)
@@ -623,6 +631,14 @@ def handler(event, context):
     
     try:
         response = app.resolve(event, context)
+        
+        # Ensure CORS headers are always present in successful responses
+        if 'headers' not in response:
+            response['headers'] = {}
+        
+        # Add CORS headers to the response
+        response['headers'].update(CORS_HEADERS)
+        
         return response
     except Exception as e:
         logger.exception("Unexpected error in orders function")
@@ -630,11 +646,6 @@ def handler(event, context):
         
         return {
             'statusCode': 500,
-            'headers': {
-                'Content-Type': 'application/json',
-                'Access-Control-Allow-Origin': '*',
-                'Access-Control-Allow-Headers': 'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token',
-                'Access-Control-Allow-Methods': 'GET,PUT,POST,DELETE,OPTIONS'
-            },
+            'headers': CORS_HEADERS,
             'body': json.dumps({'error': 'Internal server error'})
         }
