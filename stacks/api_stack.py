@@ -28,6 +28,10 @@ from constructs import Construct
 class ApiStack(Stack):
     """API Gateway stack for REST and WebSocket APIs"""
 
+    # Constants for Lambda permission configuration
+    API_GATEWAY_PRINCIPAL = "apigateway.amazonaws.com"
+    LAMBDA_INVOKE_ACTION = "lambda:InvokeFunction"
+
     def __init__(self, scope: Construct, construct_id: str, data_stack, compute_stack, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
         
@@ -248,6 +252,16 @@ class ApiStack(Stack):
             authorization_type=apigw.AuthorizationType.COGNITO
         )
 
+        # Grant API Gateway permission to invoke the product CRUD Lambda function
+        # Note: Using CfnPermission because add_permission() doesn't work with imported functions
+        _lambda.CfnPermission(
+            self, "AllowApiGatewayInvokeProductCrud",
+            action=self.LAMBDA_INVOKE_ACTION,
+            function_name=Fn.import_value("E-Com67-ProductCrudFunctionArn"),
+            principal=self.API_GATEWAY_PRINCIPAL,
+            source_arn=f"arn:aws:execute-api:{self.region}:{self.account}:{self.rest_api.rest_api_id}/*/*/*"
+        )
+
     def _create_cart_endpoints(self):
         """Set up cart endpoints with user-specific authorization"""
         
@@ -292,6 +306,16 @@ class ApiStack(Stack):
             authorization_type=apigw.AuthorizationType.COGNITO
         )
 
+        # Grant API Gateway permission to invoke the cart Lambda function
+        # Note: Using CfnPermission because add_permission() doesn't work with imported functions
+        _lambda.CfnPermission(
+            self, "AllowApiGatewayInvokeCart",
+            action=self.LAMBDA_INVOKE_ACTION,
+            function_name=Fn.import_value("E-Com67-CartFunctionArn"),
+            principal=self.API_GATEWAY_PRINCIPAL,
+            source_arn=f"arn:aws:execute-api:{self.region}:{self.account}:{self.rest_api.rest_api_id}/*/*/*"
+        )
+
     def _create_order_endpoints(self):
         """Set up order endpoints with Step Functions integration"""
         
@@ -318,7 +342,7 @@ class ApiStack(Stack):
         # Create IAM role for API Gateway to invoke Step Functions
         step_functions_integration_role = iam.Role(
             self, "StepFunctionsIntegrationRole",
-            assumed_by=iam.ServicePrincipal("apigateway.amazonaws.com"),
+            assumed_by=iam.ServicePrincipal(self.API_GATEWAY_PRINCIPAL),
             description="Role for API Gateway to invoke Step Functions"
         )
         
@@ -436,6 +460,16 @@ class ApiStack(Stack):
             authorization_type=apigw.AuthorizationType.COGNITO
         )
 
+        # Grant API Gateway permission to invoke the orders Lambda function
+        # Note: Using CfnPermission because add_permission() doesn't work with imported functions
+        _lambda.CfnPermission(
+            self, "AllowApiGatewayInvokeOrders",
+            action=self.LAMBDA_INVOKE_ACTION,
+            function_name=Fn.import_value("E-Com67-OrdersFunctionArn"),
+            principal=self.API_GATEWAY_PRINCIPAL,
+            source_arn=f"arn:aws:execute-api:{self.region}:{self.account}:{self.rest_api.rest_api_id}/*/*/*"
+        )
+
     def _create_payment_endpoints(self):
         """Set up payment endpoints for Stripe integration"""
         
@@ -512,10 +546,12 @@ class ApiStack(Stack):
         )
 
         # Grant API Gateway permission to invoke the payment Lambda function
-        payment_function.add_permission(
-            "AllowApiGatewayInvokePayment",
-            principal=iam.ServicePrincipal("apigateway.amazonaws.com"),
-            action="lambda:InvokeFunction",
+        # Note: Using CfnPermission because add_permission() doesn't work with imported functions
+        _lambda.CfnPermission(
+            self, "AllowApiGatewayInvokePayment",
+            action=self.LAMBDA_INVOKE_ACTION,
+            function_name=Fn.import_value("E-Com67-PaymentFunctionArn"),
+            principal=self.API_GATEWAY_PRINCIPAL,
             source_arn=f"arn:aws:execute-api:{self.region}:{self.account}:{self.rest_api.rest_api_id}/*/*/*"
         )
 
@@ -556,6 +592,16 @@ class ApiStack(Stack):
             search_integration,
             authorization_type=apigw.AuthorizationType.NONE,
             api_key_required=False
+        )
+
+        # Grant API Gateway permission to invoke the search Lambda function
+        # Note: Using CfnPermission because add_permission() doesn't work with imported functions
+        _lambda.CfnPermission(
+            self, "AllowApiGatewayInvokeSearch",
+            action=self.LAMBDA_INVOKE_ACTION,
+            function_name=Fn.import_value("E-Com67-SearchFunctionArn"),
+            principal=self.API_GATEWAY_PRINCIPAL,
+            source_arn=f"arn:aws:execute-api:{self.region}:{self.account}:{self.rest_api.rest_api_id}/*/*/*"
         )
 
     def _create_admin_endpoints(self):
@@ -624,6 +670,10 @@ class ApiStack(Stack):
             authorization_type=apigw.AuthorizationType.COGNITO
         )
 
+        # Note: Admin endpoints use the same Lambda functions as main endpoints
+        # The permissions are already granted in _create_product_endpoints and _create_order_endpoints
+        # No additional permissions needed here since they share the same function ARN
+
     def _create_websocket_api(self):
         """Create WebSocket API for real-time chat functionality"""
         
@@ -691,10 +741,12 @@ class ApiStack(Stack):
         )
         
         # Grant API Gateway permission to invoke the Lambda function
-        self.chat_function.add_permission(
-            "AllowApiGatewayInvoke",
-            principal=iam.ServicePrincipal("apigateway.amazonaws.com"),
-            action="lambda:InvokeFunction",
+        # Note: Using CfnPermission because add_permission() doesn't work with imported functions
+        _lambda.CfnPermission(
+            self, "AllowApiGatewayInvokeChat",
+            action=self.LAMBDA_INVOKE_ACTION,
+            function_name=Fn.import_value("E-Com67-ChatFunctionArn"),
+            principal=self.API_GATEWAY_PRINCIPAL,
             source_arn=f"arn:aws:execute-api:{self.region}:{self.account}:{self.websocket_api.ref}/*/*"
         )
 

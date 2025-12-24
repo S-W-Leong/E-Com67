@@ -198,20 +198,36 @@ class StrandsAgentManager:
         tools = []
         
         try:
-            # Import custom tools (these will be implemented in later tasks)
-            from .tools.product_search_tool import ProductSearchTool
-            from .tools.cart_management_tool import CartManagementTool
-            from .tools.order_query_tool import OrderQueryTool
-            from .tools.knowledge_base_tool import KnowledgeBaseTool
+            # Import custom tool functions (decorated with @tool)
+            from .tools.product_search_tool import product_search, get_product_details, get_product_recommendations
+            from .tools.cart_management_tool import add_to_cart, get_cart_contents, update_cart_item, remove_from_cart, clear_cart
+            from .tools.order_query_tool import get_order_history, get_order_details, track_order, search_orders
+            from .tools.knowledge_base_tool import search_knowledge_base, get_platform_info, get_help_topics
             
-            # Initialize tools with user context
-            user_id = user_context.get('user_id') if user_context else None
-            
+            # Add all tool functions to the tools list
             tools.extend([
-                ProductSearchTool(user_context=user_context),
-                CartManagementTool(user_id=user_id),
-                OrderQueryTool(user_id=user_id),
-                KnowledgeBaseTool()
+                # Product search tools
+                product_search,
+                get_product_details,
+                get_product_recommendations,
+                
+                # Cart management tools
+                add_to_cart,
+                get_cart_contents,
+                update_cart_item,
+                remove_from_cart,
+                clear_cart,
+                
+                # Order query tools
+                get_order_history,
+                get_order_details,
+                track_order,
+                search_orders,
+                
+                # Knowledge base tools
+                search_knowledge_base,
+                get_platform_info,
+                get_help_topics
             ])
             
             logger.debug(f"Loaded {len(tools)} custom tools for agent")
