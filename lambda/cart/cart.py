@@ -444,20 +444,40 @@ class CartService:
 
 def extract_user_id_from_event(event: Dict[str, Any]) -> str:
     """Extract user ID from JWT token in API Gateway event"""
-    # For now, we'll use a placeholder - in real implementation this would extract from JWT
-    # This would be replaced with proper JWT token parsing
     request_context = event.get('requestContext', {})
     authorizer = request_context.get('authorizer', {})
     
-    # In a real implementation, this would extract the user ID from the JWT claims
-    user_id = authorizer.get('claims', {}).get('sub')
+    # Try to get user ID from Cognito JWT claims
+    user_id = None
     
+    # Check for Cognito authorizer claims
+    if 'claims' in authorizer:
+        user_id = authorizer['claims'].get('sub')
+    
+    # Check for direct authorizer context (sometimes Cognito puts it here)
+    if not user_id and 'sub' in authorizer:
+        user_id = authorizer.get('sub')
+    
+    # For testing purposes, allow user_id to be passed in headers
     if not user_id:
-        # For testing purposes, allow user_id to be passed in headers
         headers = event.get('headers', {})
         user_id = headers.get('x-user-id') or headers.get('X-User-Id')
     
+    # Log the event structure for debugging
+    logger.info("Extracting user ID from event", extra={
+        "request_context": request_context,
+        "authorizer_keys": list(authorizer.keys()) if authorizer else [],
+        "headers": list(event.get('headers', {}).keys()),
+        "found_user_id": bool(user_id)
+    })
+    
     if not user_id:
+        logger.error("User ID not found in request", extra={
+            "event_structure": {
+                "requestContext": request_context,
+                "headers": event.get('headers', {})
+            }
+        })
         raise ValidationError("User ID not found in request")
     
     return user_id
@@ -490,6 +510,9 @@ def create_error_response(status_code: int, error_code: str, message: str, detai
 
 def create_success_response(data: Any, status_code: int = 200) -> Dict[str, Any]:
     """Create standardized success response"""
+    # Convert any Decimal objects to float before JSON serialization
+    converted_data = convert_decimals_to_float(data)
+    
     return {
         "statusCode": status_code,
         "headers": {
@@ -498,7 +521,7 @@ def create_success_response(data: Any, status_code: int = 200) -> Dict[str, Any]
             "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
             "Access-Control-Allow-Headers": "Content-Type, Authorization, X-User-Id"
         },
-        "body": json.dumps(data)
+        "body": json.dumps(converted_data)
     }
 
 
@@ -535,6 +558,7 @@ def handler(event, context):
         try:
             user_id = extract_user_id_from_event(event)
         except ValidationError as e:
+            logger.error("Authentication failed", extra={"error": str(e)})
             return create_error_response(401, "UNAUTHORIZED", str(e))
         
         # Route based on HTTP method and path
@@ -601,6 +625,16 @@ def handler(event, context):
         
         else:
             return create_error_response(405, "METHOD_NOT_ALLOWED", f"HTTP method {http_method} not allowed")
+    
+    except ValidationError as e:
+        logger.error("Validation error in cart function", extra={"error": str(e)})
+        metrics.add_metric(name="CartValidationError", unit=MetricUnit.Count, value=1)
+        return create_error_response(400, "VALIDATION_ERROR", str(e))
+    
+    except BusinessLogicError as e:
+        logger.error("Business logic error in cart function", extra={"error": str(e)})
+        metrics.add_metric(name="CartBusinessLogicError", unit=MetricUnit.Count, value=1)
+        return create_error_response(400, "BUSINESS_LOGIC_ERROR", str(e))
     
     except Exception as e:
         logger.exception("Unexpected error in cart function")

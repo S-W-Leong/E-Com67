@@ -8,7 +8,7 @@ const Home = () => {
       id: 1,
       name: 'Premium Wireless Headphones',
       price: 199.99,
-      image: 'https://via.placeholder.com/300x300?text=Headphones',
+      image: 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=300&h=300&fit=crop&crop=center',
       rating: 4.8,
       reviews: 124
     },
@@ -16,7 +16,7 @@ const Home = () => {
       id: 2,
       name: 'Smart Fitness Watch',
       price: 299.99,
-      image: 'https://via.placeholder.com/300x300?text=Watch',
+      image: 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=300&h=300&fit=crop&crop=center',
       rating: 4.6,
       reviews: 89
     },
@@ -24,7 +24,7 @@ const Home = () => {
       id: 3,
       name: 'Organic Cotton T-Shirt',
       price: 29.99,
-      image: 'https://via.placeholder.com/300x300?text=T-Shirt',
+      image: 'https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=300&h=300&fit=crop&crop=center',
       rating: 4.9,
       reviews: 156
     }

@@ -1,134 +1,947 @@
 # E-Com67 Platform
 
-A comprehensive serverless e-commerce platform built on AWS demonstrating modern cloud architecture patterns, microservices design, and advanced features including AI-powered customer support, real-time search capabilities, and automated order processing.
+A comprehensive serverless e-commerce platform built on AWS demonstrating modern cloud architecture patterns, microservices design, and advanced features including AI-powered customer support, real-time search, and automated order processing.
+
+## Table of Contents
+
+- [Architecture Overview](#architecture-overview)
+- [Project Structure](#project-structure)
+- [AWS Services Used](#aws-services-used)
+- [Prerequisites](#prerequisites)
+- [Setup and Deployment](#setup-and-deployment)
+- [Frontend Applications](#frontend-applications)
+- [API Reference](#api-reference)
+- [Lambda Functions](#lambda-functions)
+- [Data Models](#data-models)
+- [Authentication](#authentication)
+- [Payment Processing](#payment-processing)
+- [AI Chat Feature](#ai-chat-feature)
+- [Search Functionality](#search-functionality)
+- [Notification System](#notification-system)
+- [Testing](#testing)
+- [Monitoring and Observability](#monitoring-and-observability)
+- [Cost Optimization](#cost-optimization)
+- [Troubleshooting](#troubleshooting)
+
+---
 
 ## Architecture Overview
 
-The platform follows a dual-frontend architecture with serverless backend:
+E-Com67 implements a serverless microservices architecture on AWS with the following key characteristics:
 
-### Backend (AWS CDK)
-- **DataStack**: DynamoDB tables and Cognito User Pool
-- **ComputeStack**: Lambda functions and layers
-- **ApiStack**: API Gateway configuration (future)
-- **InfrastructureStack**: Supporting services (future)
+- **Event-Driven Design**: Asynchronous processing using SQS, SNS, and Step Functions
+- **API-First Approach**: RESTful APIs with WebSocket support for real-time features
+- **Serverless Computing**: Lambda functions for all business logic with automatic scaling
+- **Managed Services**: DynamoDB, OpenSearch, Cognito, Bedrock, and more
+- **Multi-Stack CDK**: Clear separation of concerns across Data, Compute, and API layers
 
-### Frontend Applications
-- **Admin Dashboard** (`frontends/admin-dashboard/`): Administrative interface for staff
-- **Customer Application** (`frontends/customer-app/`): Customer-facing shopping experience
-- **Shared Components** (`frontends/shared/`): Reusable components and utilities
+### High-Level Architecture
+
+```
+                          +-------------------+
+                          |    CloudFront     |
+                          |   (CDN - Future)  |
+                          +---------+---------+
+                                    |
+              +---------------------+---------------------+
+              |                                           |
+    +---------v---------+                     +-----------v-----------+
+    |    REST API       |                     |    WebSocket API      |
+    |   API Gateway     |                     |    API Gateway        |
+    +---------+---------+                     +-----------+-----------+
+              |                                           |
+    +---------v-----------------------------------------+-v-----------+
+    |                       Lambda Functions                          |
+    |  +------------+  +--------+  +---------+  +-------+  +-------+  |
+    |  |ProductCRUD |  | Cart   |  | Orders  |  |Payment|  | Chat  |  |
+    |  +------------+  +--------+  +---------+  +-------+  +-------+  |
+    +------------------+----------+----------+------------+-----------+
+                       |          |          |            |
+         +-------------+   +------+------+   +------------+
+         |                 |             |                |
+    +----v----+      +-----v-----+  +----v----+     +-----v-----+
+    | DynamoDB|      |Step Fns   |  |   SQS   |     | Bedrock   |
+    | Tables  |      |Workflow   |  | Queues  |     | (AI/ML)   |
+    +---------+      +-----------+  +---------+     +-----------+
+         |
+    +----v--------+
+    | OpenSearch  |
+    | (Search)    |
+    +-------------+
+```
+
+### Stack Dependencies
+
+```
+DataStack (DynamoDB, Cognito, OpenSearch, S3)
+    |
+    v
+ComputeStack (Lambda, SQS, SNS, Step Functions, Secrets)
+    |
+    v
+ApiStack (REST API Gateway, WebSocket API Gateway)
+```
+
+---
 
 ## Project Structure
 
 ```
-├── app.py                 # CDK application entry point
-├── cdk.json              # CDK configuration
-├── requirements.txt      # Python dependencies
-├── deploy.sh            # Deployment script
-├── stacks/              # CDK stack definitions
-│   ├── data_stack.py    # Data layer resources
-│   └── compute_stack.py # Compute layer resources
-├── lambda/              # Lambda function code
-│   ├── product_crud/    # Product CRUD operations
-│   └── cart/           # Shopping cart operations
-├── layers/             # Lambda layers
-│   ├── powertools/     # AWS Lambda Powertools
-│   ├── utils/         # Common utilities
-│   └── stripe/        # Stripe SDK
-└── frontends/          # Frontend applications
-    ├── admin-dashboard/ # Admin interface (React)
-    ├── customer-app/   # Customer shopping app (React)
-    ├── shared/        # Shared components library
-    └── README.md      # Frontend documentation
+e-com67/
+├── app.py                      # CDK application entry point
+├── cdk.json                    # CDK configuration
+├── requirements.txt            # Python dependencies
+├── deploy.sh                   # Deployment helper script
+│
+├── stacks/                     # AWS CDK stack definitions
+│   ├── data_stack.py          # DynamoDB, Cognito, OpenSearch, S3
+│   ├── compute_stack.py       # Lambda, SQS, SNS, Step Functions
+│   └── api_stack.py           # API Gateway (REST + WebSocket)
+│
+├── lambda/                     # Lambda function implementations
+│   ├── product_crud/          # Product CRUD operations
+│   ├── cart/                  # Shopping cart management
+│   ├── orders/                # Order retrieval and history
+│   ├── payment/               # Stripe payment processing
+│   ├── order_processor/       # Async order fulfillment (SQS)
+│   ├── chat/                  # AI chat (Bedrock + Strands SDK)
+│   ├── search/                # OpenSearch product search
+│   ├── search_sync/           # DynamoDB Streams -> OpenSearch sync
+│   ├── knowledge_processor/   # RAG document processing
+│   ├── knowledge_manager/     # Knowledge base management
+│   ├── notification_orchestrator/  # Notification routing
+│   └── email_notification/    # SES email sending
+│
+├── layers/                     # Shared Lambda layers
+│   ├── powertools/            # AWS Lambda Powertools
+│   ├── utils/                 # Common utilities, CORS, validators
+│   ├── stripe/                # Stripe SDK
+│   ├── opensearch/            # OpenSearch Python client
+│   └── strands/               # Strands AI agent SDK
+│
+├── frontends/                  # React applications
+│   ├── customer-app/          # Customer shopping interface
+│   ├── admin-dashboard/       # Admin management interface
+│   └── shared/                # Shared components and utilities
+│
+├── docs/                       # Additional documentation
+│   ├── api-endpoints.md
+│   ├── stripe-frontend-integration.md
+│   ├── knowledge-base-guide.md
+│   └── notification-system-integration.md
+│
+└── tests/                      # Test files
 ```
 
-## Getting Started
+---
 
-### Prerequisites
+## AWS Services Used
 
-- Python 3.9+
-- AWS CLI configured
-- AWS CDK CLI installed
-- Virtual environment activated
+| Service | Purpose | Configuration |
+|---------|---------|---------------|
+| **DynamoDB** | Primary database for products, cart, orders, chat | On-demand billing, point-in-time recovery |
+| **Cognito** | User authentication and authorization | Email-based sign-in, JWT tokens |
+| **API Gateway** | REST API and WebSocket endpoints | Cognito authorizer, CORS enabled |
+| **Lambda** | Serverless compute for all business logic | Python 3.9/3.10, X-Ray tracing |
+| **Step Functions** | Order processing workflow orchestration | Checkout workflow with retry logic |
+| **SQS** | Asynchronous message processing | Order processing queue with DLQ |
+| **SNS** | Event notifications | Order and admin notification topics |
+| **OpenSearch** | Full-text product search | t3.small.search, single node |
+| **S3** | Knowledge base document storage | Versioned, encrypted |
+| **Bedrock** | AI-powered chat and embeddings | Titan Text Express, Titan Embed |
+| **SES** | Email notifications | Order confirmations, alerts |
+| **Secrets Manager** | API key storage | Stripe API key |
+| **CloudWatch** | Logging and monitoring | Structured logs, custom metrics |
+| **X-Ray** | Distributed tracing | Enabled on all Lambda functions |
 
-### Deployment
+---
 
-1. **Install dependencies:**
-   ```bash
-   source .venv/bin/activate
-   pip install -r requirements.txt
-   ```
+## Prerequisites
 
-2. **Deploy the platform:**
-   ```bash
-   ./deploy.sh
-   ```
+- **Python 3.9+** (3.10 recommended for Strands SDK)
+- **Node.js 18+** and npm
+- **AWS CLI** configured with appropriate credentials
+- **AWS CDK CLI** (`npm install -g aws-cdk`)
+- **Stripe account** (test mode for development)
 
-3. **Or deploy manually:**
-   ```bash
-   # Synthesize templates
-   cdk synth --all
-   
-   # Deploy in order
-   cdk deploy E-Com67-DataStack
-   cdk deploy E-Com67-ComputeStack
-   ```
+### Required AWS Permissions
 
-## Resources Created
+Your AWS credentials must have permissions to create:
+- IAM roles and policies
+- DynamoDB tables
+- Lambda functions and layers
+- API Gateway APIs
+- Cognito user pools
+- OpenSearch domains
+- S3 buckets
+- SQS queues and SNS topics
+- Step Functions state machines
+- Secrets Manager secrets
+- CloudWatch log groups
 
-### DynamoDB Tables
+---
 
-- **e-com67-products**: Product catalog with category GSI
-- **e-com67-cart**: Shopping cart with composite keys
-- **e-com67-orders**: Order history with user-timestamp GSI
-- **e-com67-chat-history**: AI chat conversation storage
+## Setup and Deployment
 
-### Cognito Resources
+### 1. Clone and Install Dependencies
 
-- **User Pool**: Authentication with email verification
-- **User Pool Client**: Application client configuration
-- **Admin Group**: Administrative user group
+```bash
+# Clone the repository
+git clone <repository-url>
+cd e-com67
 
-### Lambda Functions
+# Create and activate Python virtual environment
+python3 -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 
-- **ProductCrudFunction**: Product management operations
-- **CartFunction**: Shopping cart operations
+# Install Python dependencies
+pip install -r requirements.txt
+```
 
-### Lambda Layers
+### 2. Install Lambda Layer Dependencies
 
-- **PowertoolsLayer**: AWS Lambda Powertools for observability
-- **UtilsLayer**: Common utilities and business logic
-- **StripeLayer**: Stripe SDK for payment processing
+```bash
+# Install dependencies for each layer
+cd layers/powertools && pip install -r requirements.txt -t python/ && cd ../..
+cd layers/stripe && pip install -r requirements.txt -t python/ && cd ../..
+cd layers/opensearch && pip install -r requirements.txt -t python/ && cd ../..
+```
 
-## Development
+### 3. Configure Environment
 
-The project is designed for learning AWS serverless technologies while building a production-ready e-commerce platform. Each component demonstrates best practices for:
+Set the required environment variables:
 
-- Infrastructure as Code with AWS CDK
-- Serverless architecture patterns
-- Event-driven design
-- Security and compliance
-- Monitoring and observability
+```bash
+export CDK_DEFAULT_ACCOUNT=<your-aws-account-id>
+export CDK_DEFAULT_REGION=ap-southeast-1  # or your preferred region
+```
 
-## Next Steps
+### 4. Bootstrap CDK (First Time Only)
 
-This foundation enables implementation of:
+```bash
+cdk bootstrap aws://$CDK_DEFAULT_ACCOUNT/$CDK_DEFAULT_REGION
+```
 
-- API Gateway integration
-- Payment processing with Stripe
-- AI-powered chat with Amazon Bedrock
-- Advanced search with OpenSearch
-- Multi-channel notifications
-- Administrative dashboard
-- CI/CD pipeline
-- Comprehensive monitoring
+### 5. Deploy the Stacks
 
-## Cost Management
+```bash
+# Deploy all stacks in order
+cdk deploy E-Com67-DataStack --require-approval never
+cdk deploy E-Com67-ComputeStack --require-approval never
+cdk deploy E-Com67-ApiStack --require-approval never
 
-The platform uses serverless and pay-per-use services to minimize costs:
+# Or deploy all at once
+cdk deploy --all --require-approval never
+```
 
-- DynamoDB on-demand billing
-- Lambda pay-per-invocation
-- Cognito free tier for authentication
-- CloudWatch logs and metrics
+### 6. Configure Stripe API Key
 
-Monitor costs regularly and set up billing alerts for production deployments.
+After deployment, update the Stripe secret in AWS Secrets Manager:
+
+```bash
+aws secretsmanager update-secret \
+  --secret-id e-com67/stripe/api-key \
+  --secret-string '{"api_key": "sk_test_your_stripe_key"}'
+```
+
+### 7. Get API Endpoints
+
+```bash
+# Get the REST API endpoint
+aws cloudformation describe-stacks \
+  --stack-name E-Com67-ApiStack \
+  --query "Stacks[0].Outputs[?OutputKey=='RestApiEndpoint'].OutputValue" \
+  --output text
+
+# Get the WebSocket API endpoint
+aws cloudformation describe-stacks \
+  --stack-name E-Com67-ApiStack \
+  --query "Stacks[0].Outputs[?OutputKey=='WebSocketApiUrl'].OutputValue" \
+  --output text
+```
+
+---
+
+## Frontend Applications
+
+### Customer App
+
+The customer-facing React application for shopping.
+
+```bash
+cd frontends/customer-app
+
+# Install dependencies
+npm install
+
+# Configure environment
+cat > .env.local << EOF
+VITE_API_BASE_URL=https://<api-id>.execute-api.ap-southeast-1.amazonaws.com/prod
+VITE_WEBSOCKET_URL=wss://<websocket-id>.execute-api.ap-southeast-1.amazonaws.com/prod
+VITE_STRIPE_PUBLISHABLE_KEY=pk_test_your_stripe_key
+EOF
+
+# Start development server
+npm run dev  # Runs on http://localhost:3001
+
+# Build for production
+npm run build
+```
+
+**Tech Stack:**
+- React 18 + Vite
+- Tailwind CSS
+- AWS Amplify (authentication)
+- Stripe.js (payments)
+- React Router
+
+### Admin Dashboard
+
+The administrative interface for managing products and orders.
+
+```bash
+cd frontends/admin-dashboard
+
+# Install dependencies
+npm install
+
+# Configure environment (same as customer app)
+
+# Start development server
+npm run dev  # Runs on http://localhost:3002
+
+# Build for production
+npm run build
+```
+
+---
+
+## API Reference
+
+### Base URL
+
+```
+https://{api-id}.execute-api.{region}.amazonaws.com/prod
+```
+
+### Authentication
+
+Protected endpoints require a JWT token in the `Authorization` header:
+
+```
+Authorization: Bearer <id-token>
+```
+
+### Endpoints
+
+#### Products (Public)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/products` | List all products |
+| GET | `/products/{id}` | Get product details |
+| GET | `/search?q={query}` | Search products |
+| GET | `/search/suggest?q={query}` | Get search suggestions |
+
+**Query Parameters for GET /products:**
+- `category` - Filter by category
+- `limit` - Number of items (default: 20)
+- `lastKey` - Pagination key
+
+**Query Parameters for GET /search:**
+- `q` - Search query (required)
+- `category` - Filter by category
+- `minPrice` / `maxPrice` - Price range
+- `limit` - Number of results
+
+#### Products (Admin - Requires Auth)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/products` | Create product |
+| PUT | `/products/{id}` | Update product |
+| DELETE | `/products/{id}` | Delete product |
+| GET | `/admin/products` | List with admin details |
+
+#### Cart (Requires Auth)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/cart` | Get cart contents |
+| POST | `/cart` | Add/update item |
+| DELETE | `/cart?productId={id}` | Remove item |
+
+**POST /cart Body:**
+```json
+{
+  "productId": "uuid",
+  "quantity": 1
+}
+```
+
+#### Orders (Requires Auth)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/orders` | Get order history |
+| GET | `/orders/{id}` | Get order details |
+| POST | `/orders` | Place order (triggers Step Functions) |
+
+**POST /orders Body:**
+```json
+{
+  "paymentMethodId": "pm_xxx",
+  "shippingAddress": {
+    "street": "123 Main St",
+    "city": "Singapore",
+    "state": "SG",
+    "zipCode": "123456",
+    "country": "Singapore"
+  }
+}
+```
+
+#### Payment (Requires Auth)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/payment` | Create payment intent |
+| GET | `/payment/status` | Get payment status |
+| POST | `/payment/webhook` | Stripe webhook (public) |
+| POST | `/payment/refund` | Process refund (admin) |
+
+#### Admin (Requires Auth + Admin Role)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/admin/orders` | List all orders |
+| PUT | `/admin/orders/{id}` | Update order status |
+
+### WebSocket API
+
+**URL:** `wss://{websocket-id}.execute-api.{region}.amazonaws.com/prod`
+
+**Routes:**
+- `$connect` - Establish connection
+- `$disconnect` - Clean up connection
+- `sendMessage` - Send chat message
+
+**Message Format:**
+```json
+{
+  "action": "sendMessage",
+  "message": "Hello, I need help finding a product"
+}
+```
+
+### Error Responses
+
+All errors follow a consistent format:
+
+```json
+{
+  "error": {
+    "code": "PRODUCT_NOT_FOUND",
+    "message": "The requested product could not be found",
+    "details": {
+      "productId": "invalid-uuid",
+      "timestamp": "2025-12-24T10:30:00Z",
+      "requestId": "req-uuid"
+    }
+  }
+}
+```
+
+---
+
+## Lambda Functions
+
+### Product CRUD (`e-com67-product-crud`)
+
+Handles all product catalog operations including create, read, update, and delete.
+
+**Key Features:**
+- Category-based filtering using GSI
+- Pagination support
+- Soft delete (sets `isActive=false`)
+- Input validation
+
+### Cart (`e-com67-cart`)
+
+Manages user shopping carts with real-time pricing validation.
+
+**Key Features:**
+- Stock availability checking
+- Real-time price updates
+- Tax calculation (8% hardcoded)
+- Cart validation for checkout
+
+### Orders (`e-com67-orders`)
+
+Handles order history retrieval and order details.
+
+**Key Features:**
+- Pagination using userId-timestamp GSI
+- Cursor-based pagination
+- Order status tracking
+
+### Payment (`e-com67-payment`)
+
+Processes payments through Stripe integration.
+
+**Key Features:**
+- Payment intent creation
+- Fraud detection scoring
+- Multiple currency support (USD, EUR, GBP, AUD, CAD)
+- Webhook signature verification
+
+### Order Processor (`e-com67-order-processor`)
+
+Asynchronous order fulfillment triggered by SQS.
+
+**Key Features:**
+- Creates order records
+- Updates inventory
+- Sends notifications via SNS
+- Clears user cart
+
+### Chat (`e-com67-chat`)
+
+AI-powered customer support using Amazon Bedrock.
+
+**Key Features:**
+- WebSocket connection handling
+- Bedrock integration (Titan models)
+- Conversation history storage
+- Knowledge base (RAG) support
+- Strands SDK for enhanced capabilities
+
+### Search (`e-com67-search`)
+
+Full-text product search using OpenSearch.
+
+**Key Features:**
+- Fuzzy matching for typo tolerance
+- Category and price filtering
+- Result highlighting
+- Faceted search with aggregations
+
+### Search Sync (`e-com67-search-sync`)
+
+Keeps OpenSearch index synchronized with DynamoDB.
+
+**Key Features:**
+- DynamoDB Streams trigger
+- Real-time index updates
+- Handles insert, modify, delete events
+
+---
+
+## Data Models
+
+### Products Table (`e-com67-products`)
+
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| productId | String (PK) | UUID |
+| name | String | Product name |
+| description | String | Product description |
+| price | Number | Price in dollars |
+| category | String | Product category (GSI) |
+| stock | Number | Available quantity |
+| imageUrl | String | Product image URL |
+| tags | List | Searchable tags |
+| isActive | Boolean | Active status |
+| createdAt | Number | Unix timestamp |
+| updatedAt | Number | Unix timestamp |
+
+**GSI:** `category-index` (category)
+
+### Cart Table (`e-com67-cart`)
+
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| userId | String (PK) | Cognito user sub |
+| productId | String (SK) | Product ID |
+| quantity | Number | Item quantity |
+| price | Number | Price at time of adding |
+| name | String | Product name |
+| imageUrl | String | Product image |
+| addedAt | Number | Unix timestamp |
+
+### Orders Table (`e-com67-orders`)
+
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| orderId | String (PK) | UUID |
+| userId | String | Cognito user sub |
+| items | List | Order items |
+| subtotal | Number | Subtotal amount |
+| tax | Number | Tax amount |
+| totalAmount | Number | Total amount |
+| status | String | Order status |
+| paymentId | String | Stripe payment intent ID |
+| shippingAddress | Map | Shipping details |
+| timestamp | Number | Unix timestamp (GSI SK) |
+
+**GSI:** `userId-timestamp-index` (userId, timestamp)
+
+### Chat History Table (`e-com67-chat-history`)
+
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| userId | String (PK) | Cognito user sub |
+| timestamp | Number (SK) | Unix timestamp |
+| messageId | String | Message UUID |
+| role | String | "user" or "assistant" |
+| content | String | Message content |
+| sessionId | String | Session UUID |
+
+---
+
+## Authentication
+
+E-Com67 uses Amazon Cognito for authentication.
+
+### User Pool Configuration
+
+- **Sign-in:** Email-based
+- **Password Policy:** 8+ chars, uppercase, lowercase, digit, symbol
+- **Verification:** Email code verification
+- **Token Validity:**
+  - Access/ID: 1 hour
+  - Refresh: 30 days
+
+### User Groups
+
+- **admin:** Administrative privileges for product and order management
+
+### Frontend Integration
+
+```javascript
+import { Amplify } from 'aws-amplify'
+import { fetchAuthSession } from 'aws-amplify/auth'
+
+// Configure Amplify
+Amplify.configure({
+  Auth: {
+    Cognito: {
+      userPoolId: '<user-pool-id>',
+      userPoolClientId: '<client-id>',
+      loginWith: {
+        email: true
+      }
+    }
+  }
+})
+
+// Get auth token for API calls
+const getAuthToken = async () => {
+  const session = await fetchAuthSession()
+  return session.tokens?.idToken?.toString()
+}
+```
+
+---
+
+## Payment Processing
+
+E-Com67 uses Stripe for payment processing.
+
+### Flow
+
+1. Frontend creates PaymentMethod using Stripe.js
+2. Backend creates PaymentIntent via Lambda
+3. Step Functions orchestrates the checkout workflow
+4. Order processor creates order and clears cart
+
+### Test Cards
+
+| Card Number | Scenario |
+|-------------|----------|
+| 4242 4242 4242 4242 | Success |
+| 4000 0025 0000 3155 | 3D Secure required |
+| 4000 0000 0000 9995 | Declined |
+
+### Frontend Integration
+
+```javascript
+import { loadStripe } from '@stripe/stripe-js'
+import { Elements, CardElement, useStripe } from '@stripe/react-stripe-js'
+
+const stripePromise = loadStripe(process.env.VITE_STRIPE_PUBLISHABLE_KEY)
+
+function CheckoutForm() {
+  const stripe = useStripe()
+
+  const handleSubmit = async () => {
+    const { paymentMethod } = await stripe.createPaymentMethod({
+      type: 'card',
+      card: elements.getElement(CardElement)
+    })
+
+    // Send paymentMethod.id to backend
+    await orderApi.placeOrder({
+      paymentMethodId: paymentMethod.id,
+      shippingAddress: { ... }
+    })
+  }
+}
+```
+
+See [docs/stripe-frontend-integration.md](docs/stripe-frontend-integration.md) for complete integration guide.
+
+---
+
+## AI Chat Feature
+
+The AI chat feature provides customer support using Amazon Bedrock.
+
+### Models Used
+
+- **amazon.titan-text-express-v1:** Main chat model
+- **amazon.titan-embed-text-v1:** Document embeddings for RAG
+
+### Knowledge Base (RAG)
+
+Documents stored in S3 are processed into embeddings and stored in OpenSearch for retrieval-augmented generation.
+
+**Supported File Types:**
+- `.txt`, `.md`, `.rst`
+- `.json`, `.csv`
+- `.html`, `.xml`
+- `.yaml`
+
+### Managing Knowledge Base
+
+```bash
+# Upload sample documents
+python scripts/manage_knowledge_base.py upload-samples
+
+# Upload individual document
+python scripts/manage_knowledge_base.py upload path/to/document.txt
+
+# List documents
+python scripts/manage_knowledge_base.py list
+```
+
+See [docs/knowledge-base-guide.md](docs/knowledge-base-guide.md) for complete guide.
+
+---
+
+## Search Functionality
+
+Product search is powered by OpenSearch.
+
+### Features
+
+- Full-text search across name and description
+- Fuzzy matching for typo tolerance
+- Category and price range filtering
+- Result highlighting
+- Faceted aggregations
+
+### Search Query Example
+
+```
+GET /search?q=laptop&category=Electronics&minPrice=500&maxPrice=2000&limit=10
+```
+
+### Index Synchronization
+
+The `search_sync` Lambda is triggered by DynamoDB Streams to keep the search index up-to-date with product changes.
+
+---
+
+## Notification System
+
+Multi-channel notifications for order updates and admin alerts.
+
+### Components
+
+- **SNS Topics:**
+  - `e-com67-order-notifications` - Customer notifications
+  - `e-com67-admin-notifications` - Admin alerts
+
+- **Lambda Functions:**
+  - `notification_orchestrator` - Routes to appropriate channels
+  - `email_notification` - Sends emails via SES
+
+### Notification Types
+
+- Order confirmation
+- Shipping updates
+- Delivery notifications
+- Admin alerts (low stock, high-value orders)
+
+See [docs/notification-system-integration.md](docs/notification-system-integration.md) for details.
+
+---
+
+## Testing
+
+### Backend Tests
+
+```bash
+# Install test dependencies
+pip install pytest hypothesis moto
+
+# Run all tests
+python -m pytest tests/ -v
+
+# Run specific test file
+python -m pytest tests/test_checkout_integration.py -v
+
+# Run with coverage
+python -m pytest tests/ --cov=lambda
+```
+
+### Frontend Tests
+
+```bash
+cd frontends/customer-app
+
+# Run tests
+npm test
+
+# Run with coverage
+npm run test:coverage
+```
+
+---
+
+## Monitoring and Observability
+
+### CloudWatch Logs
+
+All Lambda functions log to CloudWatch with structured JSON format.
+
+**Log Groups:**
+- `/aws/lambda/e-com67-*` - Lambda function logs
+- `/aws/apigateway/e-com67-api` - API Gateway access logs
+- `/aws/stepfunctions/e-com67-checkout-workflow` - Step Functions execution logs
+
+### X-Ray Tracing
+
+Distributed tracing is enabled on all Lambda functions and API Gateway.
+
+### Custom Metrics
+
+Metrics are published to the `E-Com67` namespace:
+- Request counts and latencies
+- Error rates
+- Business metrics (orders, cart operations)
+
+### Viewing Traces
+
+```bash
+# View recent traces
+aws xray get-service-graph --start-time $(date -v-1H +%s) --end-time $(date +%s)
+```
+
+---
+
+## Cost Optimization
+
+E-Com67 is designed for cost efficiency:
+
+| Resource | Optimization |
+|----------|-------------|
+| DynamoDB | On-demand billing, no idle costs |
+| Lambda | Pay per invocation only |
+| OpenSearch | t3.small.search (~$25/month vs $350+/month serverless) |
+| Cognito | Free tier for authentication |
+| API Gateway | Pay per request |
+
+### Estimated Monthly Costs (Development)
+
+- DynamoDB: ~$5-10 (based on usage)
+- OpenSearch: ~$25
+- Lambda: <$1 (low traffic)
+- API Gateway: <$1 (low traffic)
+- Other services: <$5
+
+**Total:** ~$35-45/month for development
+
+---
+
+## Troubleshooting
+
+### Common Issues
+
+#### CORS Errors
+
+Ensure CORS headers are included in all Lambda responses:
+
+```python
+headers = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Headers': 'Content-Type,Authorization',
+    'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS'
+}
+```
+
+#### Authentication Failures
+
+1. Verify Cognito User Pool ID and Client ID
+2. Check token expiration
+3. Ensure user is verified
+
+#### Payment Failures
+
+1. Verify Stripe secret key in Secrets Manager
+2. Check Stripe dashboard for declined payments
+3. Verify webhook endpoint configuration
+
+#### Search Not Working
+
+1. Check OpenSearch domain status
+2. Verify products are synced to index
+3. Check search_sync Lambda logs
+
+### Useful Commands
+
+```bash
+# Check stack status
+aws cloudformation describe-stacks --stack-name E-Com67-DataStack
+
+# View Lambda logs
+aws logs tail /aws/lambda/e-com67-product-crud --follow
+
+# Test API endpoint
+curl https://<api-id>.execute-api.ap-southeast-1.amazonaws.com/prod/products
+
+# Check DynamoDB table
+aws dynamodb scan --table-name e-com67-products --max-items 5
+```
+
+---
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make changes following the coding standards
+4. Run tests
+5. Submit a pull request
+
+### Coding Standards
+
+- **Python:** PEP 8, type hints encouraged
+- **JavaScript:** ESLint configuration provided
+- **CDK:** Follow existing patterns for resource naming
+
+---
+
+## License
+
+This project is proprietary software. All rights reserved.
+
+---
+
+## Support
+
+For issues and questions:
+- Check existing documentation in the `docs/` folder
+- Review CloudWatch logs for error details
+- Open an issue in the repository

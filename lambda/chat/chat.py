@@ -375,7 +375,7 @@ def get_relevant_context_from_knowledge_base(query: str, limit: int = 3) -> List
         
         host = opensearch_endpoint.replace('https://', '')
         region = os.environ.get('AWS_REGION', 'us-east-1')
-        service = 'aoss'  # OpenSearch Serverless
+        service = 'es'  # Changed from 'aoss' to 'es' for regular OpenSearch Service
         credentials = boto3.Session().get_credentials()
         awsauth = AWSRequestsAuth(credentials, region, service)
         

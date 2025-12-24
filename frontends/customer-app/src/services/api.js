@@ -157,6 +157,15 @@ export const orderApi = {
    */
   async placeOrder(orderData) {
     return await apiClient.post('/orders', orderData)
+  },
+
+  /**
+   * Create payment intent for checkout
+   * @param {Object} paymentData - Payment data including cart total and user info
+   * @returns {Promise<Object>} Payment intent with client secret
+   */
+  async createPaymentIntent(paymentData) {
+    return await apiClient.post('/payment', paymentData)
   }
 }
 

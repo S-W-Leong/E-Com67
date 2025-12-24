@@ -23,14 +23,13 @@ from aws_cdk import (
     aws_sns_subscriptions as sns_subscriptions,
     aws_secretsmanager as secretsmanager,
     aws_logs as logs,
-    aws_opensearchserverless as opensearchserverless,
     CfnOutput,
     Fn,
     Duration
 )
 from constructs import Construct
 import os
-import json
+
 
 
 class ComputeStack(Stack):
@@ -354,6 +353,14 @@ class ComputeStack(Stack):
             tracing=_lambda.Tracing.ACTIVE
         )
         
+        # Grant API Gateway permission to invoke the cart function
+        self.cart_function.add_permission(
+            "AllowApiGatewayInvoke",
+            principal=iam.ServicePrincipal("apigateway.amazonaws.com"),
+            action="lambda:InvokeFunction",
+            source_arn=f"arn:aws:execute-api:{self.region}:{self.account}:*/*/*"
+        )
+        
         # Payment function
         self.payment_function = _lambda.Function(
             self, "PaymentFunction",
@@ -619,16 +626,18 @@ class ComputeStack(Stack):
             iam.PolicyStatement(
                 effect=iam.Effect.ALLOW,
                 actions=[
-                    "aoss:APIAccessAll"  # OpenSearch Serverless permissions
+                    "es:ESHttpGet",
+                    "es:ESHttpPost",
+                    "es:ESHttpPut",
+                    "es:ESHttpDelete",
+                    "es:ESHttpHead"
                 ],
                 resources=[
-                    Fn.import_value("E-Com67-OpenSearchCollectionArn")
+                    Fn.import_value("E-Com67-OpenSearchDomainArn"),
+                    f"{Fn.import_value('E-Com67-OpenSearchDomainArn')}/*"
                 ]
             )
         )
-        
-        # Create OpenSearch data access policy after Lambda role is created
-        self._create_opensearch_data_access_policy()
         
         # Search Sync function - triggered by DynamoDB Streams
         self.search_sync_function = _lambda.Function(
@@ -680,51 +689,6 @@ class ComputeStack(Stack):
             tracing=_lambda.Tracing.ACTIVE,
             timeout=Duration.seconds(30),
             memory_size=256
-        )
-    
-    def _create_opensearch_data_access_policy(self):
-        """
-        Create OpenSearch Serverless data access policy.
-        
-        This policy grants the Lambda execution role permission to access the
-        OpenSearch collection. It must be created after the Lambda role exists
-        to avoid circular dependencies.
-        """
-        
-        # Create data access policy for Lambda functions
-        self.opensearch_data_access_policy = opensearchserverless.CfnAccessPolicy(
-            self, "OpenSearchDataAccessPolicy",
-            name="e-com67-data-access-policy",
-            type="data",
-            policy=json.dumps([
-                {
-                    "Rules": [
-                        {
-                            "ResourceType": "collection",
-                            "Resource": [f"collection/e-com67-products"],
-                            "Permission": [
-                                "aoss:CreateCollectionItems",
-                                "aoss:UpdateCollectionItems",
-                                "aoss:DescribeCollectionItems"
-                            ]
-                        },
-                        {
-                            "ResourceType": "index",
-                            "Resource": [f"index/e-com67-products/*"],
-                            "Permission": [
-                                "aoss:CreateIndex",
-                                "aoss:UpdateIndex",
-                                "aoss:DescribeIndex",
-                                "aoss:ReadDocument",
-                                "aoss:WriteDocument"
-                            ]
-                        }
-                    ],
-                    "Principal": [
-                        self.lambda_execution_role.role_arn
-                    ]
-                }
-            ])
         )
     
     def _create_step_functions_workflow(self):

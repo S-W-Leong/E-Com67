@@ -57,15 +57,36 @@ class OrderProcessorService:
         logger.info("Processing order", extra={"order_data": order_data})
         
         try:
-            # Extract order details
+            # Extract order details from Step Functions payload structure
             user_id = order_data['userId']
             order_id = order_data.get('orderId') or str(uuid.uuid4())
-            items = order_data['items']
-            payment_id = order_data.get('paymentId')
             
-            # Create order record
+            # Cart validation results are nested in the Step Functions payload
+            cart_validation = order_data.get('cartValidation', {})
+            cart_payload = cart_validation.get('Payload', {})
+            items = cart_payload.get('items', [])
+            
+            # If items not found in cart validation, try root level (for backward compatibility)
+            if not items:
+                items = order_data.get('items', [])
+            
+            if not items:
+                raise BusinessLogicError("No items found in order data. Cart validation may have failed.")
+            
+            payment_id = order_data.get('paymentId')
+            payment_method_id = order_data.get('paymentMethodId')
+            
+            logger.info("Processing order", extra={
+                "order_id": order_id,
+                "user_id": user_id,
+                "items_count": len(items),
+                "has_payment_id": bool(payment_id),
+                "has_payment_method_id": bool(payment_method_id)
+            })
+            
+            # Create order record with cart validation data
             order_record = OrderProcessorService._create_order_record(
-                order_id, user_id, items, order_data, payment_id
+                order_id, user_id, items, order_data, payment_id or payment_method_id, cart_payload
             )
             
             # Update inventory
@@ -110,26 +131,35 @@ class OrderProcessorService:
     
     @staticmethod
     @tracer.capture_method
-    def _create_order_record(order_id: str, user_id: str, items: List[Dict], order_data: Dict, payment_id: str) -> Dict[str, Any]:
+    def _create_order_record(order_id: str, user_id: str, items: List[Dict], order_data: Dict, payment_id: str, cart_data: Dict = None) -> Dict[str, Any]:
         """Create order record in DynamoDB"""
         logger.info("Creating order record", extra={"order_id": order_id, "user_id": user_id})
         
         current_time = int(time.time())
         
-        # Calculate totals
-        subtotal = Decimal('0')
-        for item in items:
-            item_total = Decimal(str(item['price'])) * item['quantity']
-            subtotal += item_total
+        # Use cart validation totals if available, otherwise calculate
+        if cart_data and 'totalAmount' in cart_data:
+            subtotal = Decimal(str(cart_data.get('subtotal', 0)))
+            tax_amount = Decimal(str(cart_data.get('taxAmount', 0)))
+            total_amount = Decimal(str(cart_data.get('totalAmount', 0)))
+        else:
+            # Fallback calculation
+            subtotal = Decimal('0')
+            for item in items:
+                item_total = Decimal(str(item['price'])) * item['quantity']
+                subtotal += item_total
+            
+            tax_rate = Decimal('0.08')  # 8% tax rate - would be configurable
+            tax_amount = subtotal * tax_rate
+            total_amount = subtotal + tax_amount
         
-        tax_rate = Decimal('0.08')  # 8% tax rate - would be configurable
-        tax_amount = subtotal * tax_rate
-        total_amount = subtotal + tax_amount
+        # Convert all numeric values to Decimal for DynamoDB compatibility
+        items_for_db = OrderProcessorService._convert_items_to_decimal(items)
         
         order_record = {
             'orderId': order_id,
             'userId': user_id,
-            'items': items,
+            'items': items_for_db,
             'subtotal': subtotal,
             'taxAmount': tax_amount,
             'totalAmount': total_amount,
@@ -158,6 +188,22 @@ class OrderProcessorService:
         except ClientError as e:
             logger.error("Failed to create order record", extra={"order_id": order_id, "error": str(e)})
             raise BusinessLogicError(f"Failed to create order record: {str(e)}")
+    
+    @staticmethod
+    def _convert_items_to_decimal(items: List[Dict]) -> List[Dict]:
+        """Convert all numeric values in items to Decimal for DynamoDB compatibility"""
+        converted_items = []
+        
+        for item in items:
+            converted_item = {}
+            for key, value in item.items():
+                if isinstance(value, (int, float)):
+                    converted_item[key] = Decimal(str(value))
+                else:
+                    converted_item[key] = value
+            converted_items.append(converted_item)
+        
+        return converted_items
     
     @staticmethod
     @tracer.capture_method

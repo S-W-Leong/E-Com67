@@ -28,7 +28,7 @@ AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
 
 # Initialize OpenSearch client
 credentials = boto3.Session().get_credentials()
-auth = AWSV4SignerAuth(credentials, AWS_REGION, "aoss")
+auth = AWSV4SignerAuth(credentials, AWS_REGION, "es")  # Changed from "aoss" to "es"
 
 opensearch_client = OpenSearch(
     hosts=[{"host": OPENSEARCH_ENDPOINT.replace("https://", ""), "port": 443}],

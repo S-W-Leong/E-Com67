@@ -44,7 +44,7 @@ const ProductCard = ({ product, viewMode = 'grid', onAddToCart }) => {
       {/* Product Image */}
       <div className={`relative ${viewMode === 'list' ? 'w-48 flex-shrink-0' : 'w-full'}`}>
         <img
-          src={product.imageUrl || 'https://via.placeholder.com/300x300?text=No+Image'}
+          src={product.imageUrl || 'https://images.unsplash.com/photo-1560472354-b33ff0c44a43?w=300&h=300&fit=crop&crop=center'}
           alt={product.name}
           className={`object-cover ${viewMode === 'list' ? 'h-48' : 'h-64 w-full'}`}
         />

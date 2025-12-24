@@ -1,113 +1,29 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useAuthenticator } from '@aws-amplify/ui-react'
+import { AlertCircle, ArrowLeft } from 'lucide-react'
 import { loadStripe } from '@stripe/stripe-js'
-import { Elements, PaymentElement, useStripe, useElements } from '@stripe/react-stripe-js'
-import { Lock, AlertCircle, ArrowLeft, CheckCircle } from 'lucide-react'
+import { Elements } from '@stripe/react-stripe-js'
 import { cartApi, orderApi } from '../services/api'
+import PaymentForm from '../components/PaymentForm'
 
-// Initialize Stripe (publishable key from environment)
-const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY || 'pk_test_placeholder')
-
-/**
- * Checkout Form Component
- * Handles payment processing with Stripe Elements
- */
-const CheckoutForm = ({ cart, shippingInfo, onSuccess }) => {
-  const stripe = useStripe()
-  const elements = useElements()
-  const [processing, setProcessing] = useState(false)
-  const [error, setError] = useState(null)
-
-  const handleSubmit = async (e) => {
-    e.preventDefault()
-
-    if (!stripe || !elements) {
-      return
-    }
-
-    try {
-      setProcessing(true)
-      setError(null)
-
-      // Confirm payment with Stripe
-      const { error: stripeError, paymentIntent } = await stripe.confirmPayment({
-        elements,
-        redirect: 'if_required',
-      })
-
-      if (stripeError) {
-        setError(stripeError.message)
-        setProcessing(false)
-        return
-      }
-
-      // Create order
-      const orderData = {
-        paymentIntentId: paymentIntent.id,
-        shippingAddress: shippingInfo,
-      }
-
-      const order = await orderApi.placeOrder(orderData)
-
-      // Clear cart and redirect to success
-      onSuccess(order)
-
-    } catch (err) {
-      console.error('Payment error:', err)
-      setError(err.response?.data?.error?.message || 'Payment failed. Please try again.')
-      setProcessing(false)
-    }
-  }
-
-  return (
-    <form onSubmit={handleSubmit} className="space-y-6">
-      <PaymentElement />
-
-      {error && (
-        <div className="bg-red-50 border border-red-200 rounded-md p-4 flex items-start gap-2">
-          <AlertCircle className="h-5 w-5 text-red-600 flex-shrink-0 mt-0.5" />
-          <p className="text-sm text-red-700">{error}</p>
-        </div>
-      )}
-
-      <button
-        type="submit"
-        disabled={!stripe || processing}
-        className="w-full bg-blue-600 text-white px-6 py-3 rounded-md hover:bg-blue-700 transition-colors font-semibold disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-      >
-        {processing ? (
-          <>
-            <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
-            Processing...
-          </>
-        ) : (
-          <>
-            <Lock className="h-5 w-5" />
-            Pay ${(cart.total / 100).toFixed(2)}
-          </>
-        )}
-      </button>
-
-      <p className="text-xs text-gray-500 text-center">
-        Your payment information is encrypted and secure
-      </p>
-    </form>
-  )
-}
+// Initialize Stripe
+const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY)
 
 /**
  * Checkout Page
- * Complete checkout flow with shipping and payment
+ * Complete checkout flow handled by Step Functions
  * Implements Requirements 5.1, 6.1 from design.md
  */
 const Checkout = () => {
   const navigate = useNavigate()
+  const { user } = useAuthenticator((context) => [context.user])
+  const paymentFormRef = useRef(null)
 
-  const [step, setStep] = useState(1) // 1: Shipping, 2: Payment
   const [cart, setCart] = useState(null)
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
-  const [clientSecret, setClientSecret] = useState(null)
+  const [paymentReady, setPaymentReady] = useState(false)
 
   const [shippingInfo, setShippingInfo] = useState({
     fullName: '',
@@ -172,38 +88,89 @@ const Checkout = () => {
   }
 
   /**
-   * Handle shipping form submission
+   * Handle shipping form submission - now includes payment method creation
    */
   const handleShippingSubmit = async (e) => {
     e.preventDefault()
 
     if (!validateShipping()) return
 
+    if (!paymentReady) {
+      setError('Please complete your payment information')
+      return
+    }
+
     try {
       setLoading(true)
+      setError(null)
 
-      // Create payment intent (mock - in real app, call backend API)
-      // const response = await orderApi.createPaymentIntent({ cartTotal: cart.total })
-      // setClientSecret(response.clientSecret)
+      // Create payment method using the PaymentForm
+      let paymentMethod
+      try {
+        paymentMethod = await paymentFormRef.current?.createPaymentMethod()
+        if (!paymentMethod) {
+          throw new Error('Failed to create payment method')
+        }
+      } catch (paymentError) {
+        setError(`Payment method error: ${paymentError.message}`)
+        return
+      }
 
-      // For demo purposes, use a placeholder
-      setClientSecret('placeholder_client_secret')
-      setStep(2)
+      // Submit complete checkout data to Step Functions workflow
+      const checkoutData = {
+        userId: user.userId || user.username,
+        shippingAddress: shippingInfo,
+        totalAmount: total,
+        currency: 'usd',
+        paymentMethodId: paymentMethod.id, // Include payment method ID
+      }
+
+      console.log('Submitting checkout with payment method:', paymentMethod.id)
+
+      // This triggers the Step Functions checkout workflow
+      const result = await orderApi.placeOrder(checkoutData)
+      
+      // Step Functions returns execution details
+      console.log('Checkout workflow started:', result)
+      
+      // Navigate to success page with execution info
+      navigate('/orders', {
+        state: { 
+          fromCheckout: true, 
+          executionArn: result.executionArn,
+          paymentMethodId: paymentMethod.id,
+          message: 'Your order is being processed. You will receive a confirmation email shortly.'
+        }
+      })
+
     } catch (err) {
-      console.error('Error creating payment intent:', err)
-      setError('Failed to proceed to payment. Please try again.')
+      console.error('Error starting checkout workflow:', err)
+      
+      // Handle different types of errors
+      if (err.response) {
+        // API returned an error response
+        const status = err.response.status
+        const errorData = err.response.data
+        
+        if (status === 400) {
+          setError('Invalid checkout data. Please check your information and try again.')
+        } else if (status === 401) {
+          setError('Authentication required. Please log in and try again.')
+        } else if (status === 500) {
+          setError('Server error occurred. Your order may still be processing. Please check your orders page.')
+        } else {
+          setError(`Checkout failed: ${errorData?.message || 'Unknown error'}`)
+        }
+      } else if (err.request) {
+        // Network error
+        setError('Network error. Please check your connection and try again.')
+      } else {
+        // Other error
+        setError('Failed to process checkout. Please try again.')
+      }
     } finally {
       setLoading(false)
     }
-  }
-
-  /**
-   * Handle successful order placement
-   */
-  const handleOrderSuccess = (order) => {
-    navigate(`/orders/${order.orderId}`, {
-      state: { fromCheckout: true, order }
-    })
   }
 
   /**
@@ -223,6 +190,104 @@ const Checkout = () => {
   const { subtotal, tax, shipping, total } = calculateTotals()
   const itemCount = cart?.items?.reduce((sum, item) => sum + item.quantity, 0) || 0
 
+  // Only render with Stripe Elements if we have a valid cart and total
+  const hasValidCart = cart && cart.items && cart.items.length > 0 && total > 0
+
+  // Stripe Elements options - only used when hasValidCart is true
+  const stripeOptions = hasValidCart ? {
+    mode: 'payment',
+    amount: Math.round(total * 100), // Convert to cents
+    currency: 'usd',
+    paymentMethodCreation: 'manual', // Required for createPaymentMethod
+    appearance: {
+      theme: 'stripe',
+      variables: {
+        colorPrimary: '#2563eb', // Blue-600 to match the design
+        colorBackground: '#ffffff',
+        colorText: '#1f2937', // Gray-800
+        colorDanger: '#dc2626', // Red-600
+        fontFamily: 'system-ui, sans-serif',
+        spacingUnit: '4px',
+        borderRadius: '6px',
+      },
+    },
+  } : null
+
+  return (
+    <>
+      {hasValidCart ? (
+        <Elements stripe={stripePromise} options={stripeOptions}>
+          <CheckoutContent
+            cart={cart}
+            loading={loading}
+            error={error}
+            shippingInfo={shippingInfo}
+            setShippingInfo={setShippingInfo}
+            shippingErrors={shippingErrors}
+            handleShippingSubmit={handleShippingSubmit}
+            validateShipping={validateShipping}
+            paymentFormRef={paymentFormRef}
+            paymentReady={paymentReady}
+            setPaymentReady={setPaymentReady}
+            navigate={navigate}
+            subtotal={subtotal}
+            tax={tax}
+            shipping={shipping}
+            total={total}
+            itemCount={itemCount}
+            hasValidCart={hasValidCart}
+          />
+        </Elements>
+      ) : (
+        <CheckoutContent
+          cart={cart}
+          loading={loading}
+          error={error}
+          shippingInfo={shippingInfo}
+          setShippingInfo={setShippingInfo}
+          shippingErrors={shippingErrors}
+          handleShippingSubmit={handleShippingSubmit}
+          validateShipping={validateShipping}
+          paymentFormRef={paymentFormRef}
+          paymentReady={paymentReady}
+          setPaymentReady={setPaymentReady}
+          navigate={navigate}
+          subtotal={subtotal}
+          tax={tax}
+          shipping={shipping}
+          total={total}
+          itemCount={itemCount}
+          hasValidCart={hasValidCart}
+        />
+      )}
+    </>
+  )
+}
+
+/**
+ * CheckoutContent Component - Separated to use Stripe hooks
+ */
+const CheckoutContent = ({
+  cart,
+  loading,
+  error,
+  shippingInfo,
+  setShippingInfo,
+  shippingErrors,
+  handleShippingSubmit,
+  validateShipping,
+  paymentFormRef,
+  paymentReady,
+  setPaymentReady,
+  navigate,
+  subtotal,
+  tax,
+  shipping,
+  total,
+  itemCount,
+  hasValidCart,
+}) => {
+  // Check if we're inside Elements provider
   // Loading state
   if (loading && !cart) {
     return (
@@ -260,192 +325,173 @@ const Checkout = () => {
       {/* Header */}
       <div className="mb-8">
         <button
-          onClick={() => step === 1 ? navigate('/cart') : setStep(1)}
+          onClick={() => navigate('/cart')}
           className="flex items-center gap-2 text-gray-600 hover:text-gray-900 mb-4"
         >
           <ArrowLeft className="h-5 w-5" />
-          {step === 1 ? 'Back to Cart' : 'Back to Shipping'}
+          Back to Cart
         </button>
         <h1 className="text-3xl font-bold text-gray-900">Checkout</h1>
-      </div>
-
-      {/* Progress Steps */}
-      <div className="mb-8">
-        <div className="flex items-center justify-center gap-4">
-          <div className="flex items-center">
-            <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
-              step >= 1 ? 'bg-blue-600 text-white' : 'bg-gray-300 text-gray-600'
-            }`}>
-              {step > 1 ? <CheckCircle className="h-5 w-5" /> : '1'}
-            </div>
-            <span className="ml-2 text-sm font-medium text-gray-900">Shipping</span>
-          </div>
-          <div className="w-16 h-0.5 bg-gray-300"></div>
-          <div className="flex items-center">
-            <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
-              step >= 2 ? 'bg-blue-600 text-white' : 'bg-gray-300 text-gray-600'
-            }`}>
-              2
-            </div>
-            <span className="ml-2 text-sm font-medium text-gray-900">Payment</span>
-          </div>
-        </div>
+        <p className="text-gray-600 mt-2">Complete your order information below</p>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         {/* Main Content */}
         <div className="lg:col-span-2">
-          {step === 1 ? (
-            /* Shipping Information Form */
-            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-              <h2 className="text-xl font-bold text-gray-900 mb-6">Shipping Information</h2>
+          {/* Shipping Information Form */}
+          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+            <h2 className="text-xl font-bold text-gray-900 mb-6">Shipping & Order Information</h2>
+            <p className="text-sm text-gray-600 mb-6">
+              After submitting this form, your payment will be processed securely and your order will be confirmed.
+            </p>
 
-              <form onSubmit={handleShippingSubmit} className="space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="md:col-span-2">
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Full Name *
-                    </label>
-                    <input
-                      type="text"
-                      value={shippingInfo.fullName}
-                      onChange={(e) => setShippingInfo({ ...shippingInfo, fullName: e.target.value })}
-                      className={`w-full border ${shippingErrors.fullName ? 'border-red-300' : 'border-gray-300'} rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500`}
-                    />
-                    {shippingErrors.fullName && (
-                      <p className="text-sm text-red-600 mt-1">{shippingErrors.fullName}</p>
-                    )}
-                  </div>
-
-                  <div className="md:col-span-2">
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Email *
-                    </label>
-                    <input
-                      type="email"
-                      value={shippingInfo.email}
-                      onChange={(e) => setShippingInfo({ ...shippingInfo, email: e.target.value })}
-                      className={`w-full border ${shippingErrors.email ? 'border-red-300' : 'border-gray-300'} rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500`}
-                    />
-                    {shippingErrors.email && (
-                      <p className="text-sm text-red-600 mt-1">{shippingErrors.email}</p>
-                    )}
-                  </div>
-
-                  <div className="md:col-span-2">
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Address *
-                    </label>
-                    <input
-                      type="text"
-                      value={shippingInfo.address}
-                      onChange={(e) => setShippingInfo({ ...shippingInfo, address: e.target.value })}
-                      className={`w-full border ${shippingErrors.address ? 'border-red-300' : 'border-gray-300'} rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500`}
-                    />
-                    {shippingErrors.address && (
-                      <p className="text-sm text-red-600 mt-1">{shippingErrors.address}</p>
-                    )}
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      City *
-                    </label>
-                    <input
-                      type="text"
-                      value={shippingInfo.city}
-                      onChange={(e) => setShippingInfo({ ...shippingInfo, city: e.target.value })}
-                      className={`w-full border ${shippingErrors.city ? 'border-red-300' : 'border-gray-300'} rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500`}
-                    />
-                    {shippingErrors.city && (
-                      <p className="text-sm text-red-600 mt-1">{shippingErrors.city}</p>
-                    )}
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      State *
-                    </label>
-                    <input
-                      type="text"
-                      value={shippingInfo.state}
-                      onChange={(e) => setShippingInfo({ ...shippingInfo, state: e.target.value })}
-                      className={`w-full border ${shippingErrors.state ? 'border-red-300' : 'border-gray-300'} rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500`}
-                    />
-                    {shippingErrors.state && (
-                      <p className="text-sm text-red-600 mt-1">{shippingErrors.state}</p>
-                    )}
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      ZIP Code *
-                    </label>
-                    <input
-                      type="text"
-                      value={shippingInfo.zipCode}
-                      onChange={(e) => setShippingInfo({ ...shippingInfo, zipCode: e.target.value })}
-                      className={`w-full border ${shippingErrors.zipCode ? 'border-red-300' : 'border-gray-300'} rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500`}
-                    />
-                    {shippingErrors.zipCode && (
-                      <p className="text-sm text-red-600 mt-1">{shippingErrors.zipCode}</p>
-                    )}
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Phone *
-                    </label>
-                    <input
-                      type="tel"
-                      value={shippingInfo.phone}
-                      onChange={(e) => setShippingInfo({ ...shippingInfo, phone: e.target.value })}
-                      className={`w-full border ${shippingErrors.phone ? 'border-red-300' : 'border-gray-300'} rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500`}
-                    />
-                    {shippingErrors.phone && (
-                      <p className="text-sm text-red-600 mt-1">{shippingErrors.phone}</p>
-                    )}
-                  </div>
+            <form onSubmit={handleShippingSubmit} className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="md:col-span-2">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Full Name *
+                  </label>
+                  <input
+                    type="text"
+                    value={shippingInfo.fullName}
+                    onChange={(e) => setShippingInfo({ ...shippingInfo, fullName: e.target.value })}
+                    className={`w-full border ${shippingErrors.fullName ? 'border-red-300' : 'border-gray-300'} rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500`}
+                  />
+                  {shippingErrors.fullName && (
+                    <p className="text-sm text-red-600 mt-1">{shippingErrors.fullName}</p>
+                  )}
                 </div>
 
-                <button
-                  type="submit"
-                  disabled={loading}
-                  className="w-full bg-blue-600 text-white px-6 py-3 rounded-md hover:bg-blue-700 transition-colors font-semibold disabled:bg-gray-400 disabled:cursor-not-allowed"
-                >
-                  {loading ? 'Processing...' : 'Continue to Payment'}
-                </button>
-              </form>
-            </div>
-          ) : (
-            /* Payment Form */
-            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-              <h2 className="text-xl font-bold text-gray-900 mb-6">Payment Information</h2>
-
-              {clientSecret && stripePromise ? (
-                <Elements
-                  stripe={stripePromise}
-                  options={{
-                    clientSecret,
-                    appearance: {
-                      theme: 'stripe',
-                    },
-                  }}
-                >
-                  <CheckoutForm
-                    cart={{ total: Math.round(total * 100) }}
-                    shippingInfo={shippingInfo}
-                    onSuccess={handleOrderSuccess}
+                <div className="md:col-span-2">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Email *
+                  </label>
+                  <input
+                    type="email"
+                    value={shippingInfo.email}
+                    onChange={(e) => setShippingInfo({ ...shippingInfo, email: e.target.value })}
+                    className={`w-full border ${shippingErrors.email ? 'border-red-300' : 'border-gray-300'} rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500`}
                   />
-                </Elements>
+                  {shippingErrors.email && (
+                    <p className="text-sm text-red-600 mt-1">{shippingErrors.email}</p>
+                  )}
+                </div>
+
+                <div className="md:col-span-2">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Address *
+                  </label>
+                  <input
+                    type="text"
+                    value={shippingInfo.address}
+                    onChange={(e) => setShippingInfo({ ...shippingInfo, address: e.target.value })}
+                    className={`w-full border ${shippingErrors.address ? 'border-red-300' : 'border-gray-300'} rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500`}
+                  />
+                  {shippingErrors.address && (
+                    <p className="text-sm text-red-600 mt-1">{shippingErrors.address}</p>
+                  )}
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    City *
+                  </label>
+                  <input
+                    type="text"
+                    value={shippingInfo.city}
+                    onChange={(e) => setShippingInfo({ ...shippingInfo, city: e.target.value })}
+                    className={`w-full border ${shippingErrors.city ? 'border-red-300' : 'border-gray-300'} rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500`}
+                  />
+                  {shippingErrors.city && (
+                    <p className="text-sm text-red-600 mt-1">{shippingErrors.city}</p>
+                  )}
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    State *
+                  </label>
+                  <input
+                    type="text"
+                    value={shippingInfo.state}
+                    onChange={(e) => setShippingInfo({ ...shippingInfo, state: e.target.value })}
+                    className={`w-full border ${shippingErrors.state ? 'border-red-300' : 'border-gray-300'} rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500`}
+                  />
+                  {shippingErrors.state && (
+                    <p className="text-sm text-red-600 mt-1">{shippingErrors.state}</p>
+                  )}
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    ZIP Code *
+                  </label>
+                  <input
+                    type="text"
+                    value={shippingInfo.zipCode}
+                    onChange={(e) => setShippingInfo({ ...shippingInfo, zipCode: e.target.value })}
+                    className={`w-full border ${shippingErrors.zipCode ? 'border-red-300' : 'border-gray-300'} rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500`}
+                  />
+                  {shippingErrors.zipCode && (
+                    <p className="text-sm text-red-600 mt-1">{shippingErrors.zipCode}</p>
+                  )}
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Phone *
+                  </label>
+                  <input
+                    type="tel"
+                    value={shippingInfo.phone}
+                    onChange={(e) => setShippingInfo({ ...shippingInfo, phone: e.target.value })}
+                    className={`w-full border ${shippingErrors.phone ? 'border-red-300' : 'border-gray-300'} rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500`}
+                  />
+                  {shippingErrors.phone && (
+                    <p className="text-sm text-red-600 mt-1">{shippingErrors.phone}</p>
+                  )}
+                </div>
+              </div>
+
+              {/* Payment Information Section */}
+              {hasValidCart ? (
+                <div className="mt-8 pt-6 border-t border-gray-200">
+                  <PaymentForm
+                    ref={paymentFormRef}
+                    onPaymentMethodReady={setPaymentReady}
+                    loading={loading}
+                  />
+                </div>
               ) : (
-                <div className="text-center py-8">
-                  <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-                  <p className="text-gray-600 mt-4">Loading payment form...</p>
+                <div className="mt-8 pt-6 border-t border-gray-200">
+                  <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                    <p className="text-yellow-700 text-sm">
+                      Payment information will be available once your cart is loaded.
+                    </p>
+                  </div>
                 </div>
               )}
-            </div>
-          )}
+
+              {/* Error Display */}
+              {error && (
+                <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex items-start gap-3">
+                  <AlertCircle className="h-5 w-5 text-red-600 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <h3 className="text-red-800 font-semibold mb-1">Error</h3>
+                    <p className="text-red-700">{error}</p>
+                  </div>
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={loading || (hasValidCart && !paymentReady)}
+                className="w-full bg-blue-600 text-white px-6 py-3 rounded-md hover:bg-blue-700 transition-colors font-semibold disabled:bg-gray-400 disabled:cursor-not-allowed"
+              >
+                {loading ? 'Processing Order...' : hasValidCart ? `Complete Order - $${total.toFixed(2)}` : 'Loading Cart...'}
+              </button>
+            </form>
+          </div>
         </div>
 
         {/* Order Summary */}

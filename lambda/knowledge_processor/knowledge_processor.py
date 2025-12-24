@@ -58,8 +58,8 @@ def _initialize_aws_clients():
             
             # Set up AWS authentication for OpenSearch
             host = OPENSEARCH_ENDPOINT.replace('https://', '')
-            region = os.environ.get('AWS_REGION', 'us-east-1')
-            service = 'aoss'  # OpenSearch Serverless
+            region = os.environ.get('AWS_REGION', 'ap-southeast-1')
+            service = 'es'  # Changed from 'aoss' to 'es' for regular OpenSearch Service
             credentials = boto3.Session().get_credentials()
             awsauth = AWSRequestsAuth(credentials, region, service)
             

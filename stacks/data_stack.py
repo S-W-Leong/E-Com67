@@ -11,7 +11,8 @@ from aws_cdk import (
     Stack,
     aws_dynamodb as dynamodb,
     aws_cognito as cognito,
-    aws_opensearchserverless as opensearchserverless,
+    aws_opensearchservice as opensearch,
+    aws_ec2 as ec2,
     aws_s3 as s3,
     aws_s3_notifications as s3n,
     aws_iam as iam,
@@ -22,7 +23,7 @@ from aws_cdk import (
     Fn
 )
 from constructs import Construct
-import json
+
 
 
 class DataStack(Stack):
@@ -279,120 +280,67 @@ class DataStack(Stack):
         )
 
     def _create_opensearch_domain(self):
-        """Create OpenSearch Serverless collection for product search and knowledge base"""
-
-        # Create encryption policy - must be a single object (not an array) with Rules and AWSOwnedKey
-        encryption_policy = {
-            "Rules": [
-                {
-                    "ResourceType": "collection",
-                    "Resource": ["collection/e-com67-products"]
-                }
+        """Create OpenSearch Service domain for product search and knowledge base"""
+        
+        # Create OpenSearch domain with cost-optimized configuration
+        self.opensearch_domain = opensearch.Domain(
+            self, "ProductSearchDomain",
+            domain_name="e-com67-products",
+            version=opensearch.EngineVersion.OPENSEARCH_2_3,
+            
+            # Cost-optimized capacity configuration
+            capacity=opensearch.CapacityConfig(
+                data_nodes=1,  # Single node for development
+                data_node_instance_type="t3.small.search",  # ~$25/month vs $350+/month for serverless
+                # No dedicated master nodes for cost savings in development
+            ),
+            
+            # EBS storage configuration
+            ebs=opensearch.EbsOptions(
+                volume_size=20,  # 20GB should be sufficient for development
+                volume_type=ec2.EbsDeviceVolumeType.GP3,  # GP3 is more cost-effective than GP2
+            ),
+            
+            # Disable zone awareness for single node (cost optimization)
+            zone_awareness=opensearch.ZoneAwarenessConfig(
+                enabled=False
+            ),
+            
+            # Security configuration
+            node_to_node_encryption=True,
+            encryption_at_rest=opensearch.EncryptionAtRestOptions(
+                enabled=True
+            ),
+            enforce_https=True,
+            tls_security_policy=opensearch.TLSSecurityPolicy.TLS_1_2,
+            
+            # Logging configuration (optional - can be disabled to save costs)
+            logging=opensearch.LoggingOptions(
+                slow_search_log_enabled=False,  # Disable to save CloudWatch costs
+                app_log_enabled=False,          # Disable to save CloudWatch costs
+                slow_index_log_enabled=False    # Disable to save CloudWatch costs
+            ),
+            
+            # Access policy - allow access from Lambda functions and specific IP ranges
+            access_policies=[
+                iam.PolicyStatement(
+                    effect=iam.Effect.ALLOW,
+                    principals=[iam.AccountRootPrincipal()],  # Allow access from account root
+                    actions=["es:*"],
+                    resources=[f"arn:aws:es:{self.region}:{self.account}:domain/e-com67-products/*"]
+                )
             ],
-            "AWSOwnedKey": True
-        }
-
-        self.opensearch_encryption_policy = opensearchserverless.CfnSecurityPolicy(
-            self, "OpenSearchEncryptionPolicy",
-            name="e-com67-encryption-policy",
-            type="encryption",
-            policy=json.dumps(encryption_policy)
+            
+            # Enable version upgrades without replacement
+            enable_version_upgrade=True,
+            
+            # Development environment - destroy on stack deletion
+            removal_policy=RemovalPolicy.DESTROY
         )
-
-        # Create network policy for public access
-        # Network policy must be an array of policy statements
-        # Each statement needs: Rules (with ResourceType and Resource) and AllowFromPublic at the statement level
-        # Do NOT include SourceVPCEs or SourceServices when AllowFromPublic is true
-        network_policy = [
-            {
-                "Description": "Public access for e-com67 products collection",
-                "Rules": [
-                    {
-                        "ResourceType": "collection",
-                        "Resource": ["collection/e-com67-products"]
-                    }
-                ],
-                "AllowFromPublic": True
-            },
-            {
-                "Description": "Public access for e-com67 products dashboard",
-                "Rules": [
-                    {
-                        "ResourceType": "dashboard",
-                        "Resource": ["collection/e-com67-products"]
-                    }
-                ],
-                "AllowFromPublic": True
-            }
-        ]
-
-        self.opensearch_network_policy = opensearchserverless.CfnSecurityPolicy(
-            self, "OpenSearchNetworkPolicy",
-            name="e-com67-network-policy",
-            type="network",
-            policy=json.dumps(network_policy)
-        )
-
-        # Create the OpenSearch Serverless collection
-        self.opensearch_collection = opensearchserverless.CfnCollection(
-            self, "ProductSearchCollection",
-            name="e-com67-products",
-            description="Product search and knowledge base collection for E-Com67 platform",
-            type="SEARCH"
-        )
-
-        # Collection depends on policies
-        self.opensearch_collection.add_dependency(self.opensearch_encryption_policy)
-        self.opensearch_collection.add_dependency(self.opensearch_network_policy)
-
-        # Create data access policy for IAM-based access
-        # This allows Lambda functions to access the collection
-        self.opensearch_data_policy = opensearchserverless.CfnAccessPolicy(
-            self, "OpenSearchDataPolicy",
-            name="e-com67-data-policy",
-            type="data",
-            policy=json.dumps(
-                [
-                    {
-                        "Rules": [
-                            {
-                                "Resource": [f"collection/e-com67-products"],
-                                "Permission": [
-                                    "aoss:CreateCollectionItems",
-                                    "aoss:DeleteCollectionItems",
-                                    "aoss:UpdateCollectionItems",
-                                    "aoss:DescribeCollectionItems"
-                                ],
-                                "ResourceType": "collection"
-                            },
-                            {
-                                "Resource": [f"index/e-com67-products/*"],
-                                "Permission": [
-                                    "aoss:CreateIndex",
-                                    "aoss:DeleteIndex",
-                                    "aoss:UpdateIndex",
-                                    "aoss:DescribeIndex",
-                                    "aoss:ReadDocument",
-                                    "aoss:WriteDocument"
-                                ],
-                                "ResourceType": "index"
-                            }
-                        ],
-                        "Principal": [
-                            f"arn:aws:iam::{Aws.ACCOUNT_ID}:root"
-                        ],
-                        "Description": "Data access for e-com67 products collection and knowledge base"
-                    }
-                ]
-            )
-        )
-
-        self.opensearch_data_policy.add_dependency(self.opensearch_collection)
-
-        # Store collection properties for exports
-        self.opensearch_collection_id = self.opensearch_collection.attr_id
-        self.opensearch_collection_arn = self.opensearch_collection.attr_arn
-        self.opensearch_endpoint = f"https://{self.opensearch_collection.attr_collection_endpoint}"
+        
+        # Store domain properties for exports
+        self.opensearch_domain_arn = self.opensearch_domain.domain_arn
+        self.opensearch_endpoint = f"https://{self.opensearch_domain.domain_endpoint}"
 
     def _create_exports(self):
         """Create CloudFormation exports for cross-stack resource sharing"""
@@ -508,22 +456,16 @@ class DataStack(Stack):
             export_name="E-Com67-UserPoolClientId"
         )
         
-        # OpenSearch exports (placeholder values for manual setup)
+        # OpenSearch exports
         CfnOutput(
-            self, "OpenSearchCollectionId",
-            value=self.opensearch_collection_id,
-            export_name="E-Com67-OpenSearchCollectionId"
-        )
-        
-        CfnOutput(
-            self, "OpenSearchCollectionArn",
-            value=self.opensearch_collection_arn,
-            export_name="E-Com67-OpenSearchCollectionArn"
+            self, "OpenSearchDomainArn",
+            value=self.opensearch_domain_arn,
+            export_name="E-Com67-OpenSearchDomainArn"
         )
         
         CfnOutput(
             self, "OpenSearchEndpoint",
             value=self.opensearch_endpoint,
             export_name="E-Com67-OpenSearchEndpoint",
-            description="OpenSearch collection endpoint for search operations (to be updated manually)"
+            description="OpenSearch domain endpoint for search operations"
         )

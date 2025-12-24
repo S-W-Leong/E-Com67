@@ -204,7 +204,6 @@ class PaymentService:
                 'currency': currency,
                 'metadata': metadata,
                 'capture_method': 'automatic',  # PCI DSS compliant automatic capture
-                'confirmation_method': 'automatic',
                 'setup_future_usage': None,  # Don't store payment methods by default
             }
             
@@ -216,6 +215,7 @@ class PaymentService:
                 logger.info(f"Using payment method from frontend: {payment_method_id}")
                 
                 payment_intent_params.update({
+                    'confirmation_method': 'automatic',
                     'payment_method': payment_method_id,
                     'confirm': True,
                     'return_url': payment_data.get('returnUrl', 'https://example.com/return'),
@@ -227,13 +227,10 @@ class PaymentService:
                     }
                 })
             else:
-                # Testing flow: Use automatic payment methods for backend testing
-                logger.info("No payment method provided, using automatic payment methods for backend testing")
+                # Frontend flow: Use automatic payment methods (no specific payment method provided)
+                logger.info("No payment method provided, using automatic payment methods")
                 payment_intent_params.update({
                     'automatic_payment_methods': {'enabled': True},
-                    'payment_method': 'pm_card_visa',  # Stripe's test payment method
-                    'confirm': True,
-                    'off_session': True,  # Allow off-session confirmation for backend testing
                 })
             
             # Create the payment intent

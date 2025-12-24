@@ -350,34 +350,22 @@ class ApiStack(Stack):
                             "application/json": '''#set($inputRoot = $input.path('$'))
 {
     "executionArn": "$inputRoot.executionArn",
-    "startDate": "$inputRoot.startDate",
-    "status": "RUNNING"
+    "startDate": "$inputRoot.startDate"
 }'''
-                        },
-                        response_parameters={
-                            "method.response.header.Access-Control-Allow-Origin": "'*'",
-                            "method.response.header.Access-Control-Allow-Headers": "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'",
-                            "method.response.header.Access-Control-Allow-Methods": "'GET,POST,PUT,DELETE,OPTIONS'"
                         }
                     ),
                     apigw.IntegrationResponse(
                         status_code="400",
                         selection_pattern="4\\d{2}",
                         response_templates={
-                            "application/json": '{"error": "Bad Request", "message": "Invalid request format"}'
-                        },
-                        response_parameters={
-                            "method.response.header.Access-Control-Allow-Origin": "'*'"
+                            "application/json": '{"error": "Bad Request"}'
                         }
                     ),
                     apigw.IntegrationResponse(
                         status_code="500",
                         selection_pattern="5\\d{2}",
                         response_templates={
-                            "application/json": '{"error": "Internal Server Error", "message": "Failed to start execution"}'
-                        },
-                        response_parameters={
-                            "method.response.header.Access-Control-Allow-Origin": "'*'"
+                            "application/json": '{"error": "Internal Server Error"}'
                         }
                     )
                 ]
@@ -400,29 +388,7 @@ class ApiStack(Stack):
             "POST",
             checkout_integration,
             authorizer=self.cognito_authorizer,
-            authorization_type=apigw.AuthorizationType.COGNITO,
-            method_responses=[
-                apigw.MethodResponse(
-                    status_code="200",
-                    response_parameters={
-                        "method.response.header.Access-Control-Allow-Origin": True,
-                        "method.response.header.Access-Control-Allow-Headers": True,
-                        "method.response.header.Access-Control-Allow-Methods": True
-                    }
-                ),
-                apigw.MethodResponse(
-                    status_code="400",
-                    response_parameters={
-                        "method.response.header.Access-Control-Allow-Origin": True
-                    }
-                ),
-                apigw.MethodResponse(
-                    status_code="500",
-                    response_parameters={
-                        "method.response.header.Access-Control-Allow-Origin": True
-                    }
-                )
-            ]
+            authorization_type=apigw.AuthorizationType.COGNITO
         )
         
         # Create /orders/{id} resource
