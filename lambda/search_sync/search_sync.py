@@ -13,6 +13,7 @@ Handles:
 import json
 import os
 import boto3
+from boto3.dynamodb.types import TypeDeserializer
 from aws_lambda_powertools import Logger, Tracer
 from aws_lambda_powertools.utilities.typing import LambdaContext
 from opensearchpy import OpenSearch, RequestsHttpConnection, AWSV4SignerAuth
@@ -25,6 +26,9 @@ tracer = Tracer()
 OPENSEARCH_ENDPOINT = os.environ.get("OPENSEARCH_ENDPOINT", "")
 OPENSEARCH_INDEX = "products"
 AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
+
+# Initialize DynamoDB type deserializer for converting DynamoDB JSON to Python objects
+type_deserializer = TypeDeserializer()
 
 # Initialize OpenSearch client
 credentials = boto3.Session().get_credentials()
@@ -209,9 +213,10 @@ def process_stream_record(record):
         # Index new or updated product
         new_image = record.get("dynamodb", {}).get("NewImage", {})
         if new_image:
-            # Convert DynamoDB format to regular dict
+            # Convert DynamoDB JSON format to Python objects using TypeDeserializer
+            # This properly handles all DynamoDB types including lists (L), maps (M), etc.
             product_data = {
-                key: list(value.values())[0] for key, value in new_image.items()
+                key: type_deserializer.deserialize(value) for key, value in new_image.items()
             }
             index_product(product_data)
     
