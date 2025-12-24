@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { ShoppingCart, Trash2, Plus, Minus, ArrowLeft, AlertCircle } from 'lucide-react'
-import { cartApi } from '../services/api'
+import { useCart } from '../context/CartContext'
 
 /**
  * Cart Page
@@ -10,10 +10,8 @@ import { cartApi } from '../services/api'
  */
 const Cart = () => {
   const navigate = useNavigate()
+  const { cart, loading, error, fetchCart, updateCartItem, removeFromCart } = useCart()
 
-  const [cart, setCart] = useState(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState(null)
   const [updatingItem, setUpdatingItem] = useState(null)
   const [removingItem, setRemovingItem] = useState(null)
 
@@ -22,24 +20,7 @@ const Cart = () => {
    */
   useEffect(() => {
     fetchCart()
-  }, [])
-
-  /**
-   * Fetch cart from API
-   */
-  const fetchCart = async () => {
-    try {
-      setLoading(true)
-      setError(null)
-      const data = await cartApi.getCart()
-      setCart(data)
-    } catch (err) {
-      console.error('Error fetching cart:', err)
-      setError(err.response?.data?.error?.message || 'Failed to load cart. Please try again.')
-    } finally {
-      setLoading(false)
-    }
-  }
+  }, [fetchCart])
 
   /**
    * Update item quantity
@@ -49,8 +30,7 @@ const Cart = () => {
 
     try {
       setUpdatingItem(productId)
-      const updatedCart = await cartApi.updateCartItem(productId, newQuantity)
-      setCart(updatedCart)
+      await updateCartItem(productId, newQuantity)
     } catch (err) {
       console.error('Error updating quantity:', err)
       alert('Failed to update quantity. Please try again.')
@@ -67,8 +47,7 @@ const Cart = () => {
 
     try {
       setRemovingItem(productId)
-      const updatedCart = await cartApi.removeFromCart(productId)
-      setCart(updatedCart)
+      await removeFromCart(productId)
     } catch (err) {
       console.error('Error removing item:', err)
       alert('Failed to remove item. Please try again.')

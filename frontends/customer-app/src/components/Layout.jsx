@@ -4,11 +4,13 @@ import { useAuthenticator } from '@aws-amplify/ui-react'
 import { ShoppingCart, User, Search, Menu, X } from 'lucide-react'
 import { useState } from 'react'
 import ChatWidget from './ChatWidget'
+import { useCart } from '../context/CartContext'
 
 const Layout = () => {
   const { user, signOut } = useAuthenticator((context) => [context.user])
   const navigate = useNavigate()
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
+  const { itemCount } = useCart()
 
   const handleSignOut = () => {
     signOut()
@@ -76,10 +78,12 @@ const Layout = () => {
                     className="text-gray-700 hover:text-blue-600 p-2 transition-colors relative"
                   >
                     <ShoppingCart className="h-6 w-6" />
-                    {/* Cart badge - placeholder for cart item count */}
-                    <span className="absolute -top-1 -right-1 bg-blue-600 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center">
-                      0
-                    </span>
+                    {/* Cart badge - shows item count from cart context */}
+                    {itemCount > 0 && (
+                      <span className="absolute -top-1 -right-1 bg-blue-600 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center">
+                        {itemCount > 99 ? '99+' : itemCount}
+                      </span>
+                    )}
                   </Link>
 
                   {/* User Menu */}

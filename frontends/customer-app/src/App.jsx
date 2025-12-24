@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import { Authenticator, useAuthenticator } from '@aws-amplify/ui-react'
 import '@aws-amplify/ui-react/styles.css'
 
+import { CartProvider } from './context/CartContext'
 import Layout from './components/Layout'
 import Home from './pages/Home'
 import Products from './pages/Products'
@@ -26,9 +27,10 @@ function ProtectedRoute({ children }) {
 function App() {
   return (
     <Authenticator.Provider>
-      <Router>
-        <div className="min-h-screen bg-gray-50">
-          <Routes>
+      <CartProvider>
+        <Router>
+          <div className="min-h-screen bg-gray-50">
+            <Routes>
             {/* Public routes */}
             <Route path="/" element={<Layout />}>
               <Route index element={<Home />} />
@@ -69,9 +71,10 @@ function App() {
             }>
               <Route index element={<Profile />} />
             </Route>
-          </Routes>
-        </div>
-      </Router>
+            </Routes>
+          </div>
+        </Router>
+      </CartProvider>
     </Authenticator.Provider>
   )
 }
