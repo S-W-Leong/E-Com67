@@ -104,7 +104,17 @@ e-com67/
 │   ├── orders/                # Order retrieval and history
 │   ├── payment/               # Stripe payment processing
 │   ├── order_processor/       # Async order fulfillment (SQS)
-│   ├── chat/                  # AI chat (Bedrock + Strands SDK)
+│   ├── chat/                  # AI chat (Strands SDK + Bedrock)
+│   │   ├── chat.py           # Main WebSocket handler
+│   │   ├── strands_config.py # Strands agent configuration
+│   │   ├── models.py         # Pydantic response models
+│   │   ├── response_formatters.py # Response formatting utilities
+│   │   ├── validation_utils.py    # Data validation helpers
+│   │   └── tools/            # Custom Strands agent tools
+│   │       ├── product_search_tool.py    # Product search integration
+│   │       ├── cart_management_tool.py   # Cart operations
+│   │       ├── order_query_tool.py       # Order queries
+│   │       └── knowledge_base_tool.py    # RAG knowledge base
 │   ├── search/                # OpenSearch product search
 │   ├── search_sync/           # DynamoDB Streams -> OpenSearch sync
 │   ├── knowledge_processor/   # RAG document processing
@@ -205,6 +215,7 @@ pip install -r requirements.txt
 cd layers/powertools && pip install -r requirements.txt -t python/ && cd ../..
 cd layers/stripe && pip install -r requirements.txt -t python/ && cd ../..
 cd layers/opensearch && pip install -r requirements.txt -t python/ && cd ../..
+cd layers/strands && pip install -r requirements.txt -t python/ && cd ../..
 ```
 
 ### 3. Configure Environment
@@ -417,20 +428,44 @@ Authorization: Bearer <id-token>
 | GET | `/admin/orders` | List all orders |
 | PUT | `/admin/orders/{id}` | Update order status |
 
-### WebSocket API
+#### Chat (Requires Auth)
 
-**URL:** `wss://{websocket-id}.execute-api.{region}.amazonaws.com/prod`
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| WebSocket | `wss://{websocket-id}.execute-api.{region}.amazonaws.com/prod` | Real-time chat |
 
-**Routes:**
-- `$connect` - Establish connection
-- `$disconnect` - Clean up connection
-- `sendMessage` - Send chat message
+**WebSocket Routes:**
+- `$connect` - Establish connection with authentication
+- `$disconnect` - Clean up connection and session
+- `sendMessage` - Send message to Strands AI agent
 
 **Message Format:**
 ```json
 {
   "action": "sendMessage",
-  "message": "Hello, I need help finding a product"
+  "message": "Help me find a gaming laptop under $1000",
+  "sessionId": "session-uuid",
+  "metadata": {}
+}
+```
+
+**Response Format:**
+```json
+{
+  "type": "message",
+  "message": "I found 5 gaming laptops under $1000!",
+  "data": {
+    "response_type": "product_list",
+    "products": [...],
+    "suggestions": ["Would you like to see more details?"],
+    "tools_used": ["product_search"],
+    "action_buttons": [
+      {"text": "View Details", "action": "view_product"},
+      {"text": "Add to Cart", "action": "add_to_cart"}
+    ]
+  },
+  "timestamp": 1703425200000,
+  "sessionId": "session-uuid"
 }
 ```
 
@@ -507,14 +542,20 @@ Asynchronous order fulfillment triggered by SQS.
 
 ### Chat (`e-com67-chat`)
 
-AI-powered customer support using Amazon Bedrock.
+AI-powered customer support using **Strands AI Agent SDK** with Amazon Bedrock integration.
 
 **Key Features:**
-- WebSocket connection handling
-- Bedrock integration (Titan models)
-- Conversation history storage
-- Knowledge base (RAG) support
-- Strands SDK for enhanced capabilities
+- **Strands Agent Integration**: Enhanced conversational AI with custom tool system
+- **WebSocket Connection Handling**: Real-time bidirectional communication
+- **Custom Tools System**: Direct integration with E-Com67 platform APIs
+  - Product search with OpenSearch integration
+  - Cart management with real-time validation
+  - Order queries with user access control
+  - Knowledge base with RAG capabilities
+- **Conversation Context Management**: Session persistence and history tracking
+- **Structured Responses**: Type-safe responses using Pydantic models
+- **Error Handling & Fallbacks**: Graceful degradation and retry mechanisms
+- **Performance Optimization**: Lazy initialization and efficient caching
 
 ### Search (`e-com67-search`)
 
@@ -593,9 +634,17 @@ Keeps OpenSearch index synchronized with DynamoDB.
 | userId | String (PK) | Cognito user sub |
 | timestamp | Number (SK) | Unix timestamp |
 | messageId | String | Message UUID |
-| role | String | "user" or "assistant" |
+| role | String | "user", "assistant", or "system" |
 | content | String | Message content |
 | sessionId | String | Session UUID |
+| messageType | String | Message type (message, summary, etc.) |
+| metadata | Map | Additional message data |
+
+**Features:**
+- Conversation history with session grouping
+- Message type classification for different content
+- Metadata support for structured responses
+- Automatic cleanup of old conversations
 
 ---
 
@@ -695,12 +744,108 @@ See [docs/stripe-frontend-integration.md](docs/stripe-frontend-integration.md) f
 
 ## AI Chat Feature
 
-The AI chat feature provides customer support using Amazon Bedrock.
+The AI chat feature provides intelligent customer support using the **Strands AI Agent SDK** with Amazon Bedrock integration, offering sophisticated conversational AI with direct platform integration.
+
+### Architecture Overview
+
+```
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   React Chat    │    │   WebSocket     │    │  Strands Agent  │
+│   Widget        │◄──►│   Lambda        │◄──►│   (Enhanced)    │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+                                                        │
+                       ┌─────────────────────────────────┼─────────────────────────────────┐
+                       │                                 │                                 │
+                ┌──────▼──────┐              ┌──────────▼──────────┐              ┌──────▼──────┐
+                │  Product    │              │   Cart Management   │              │   Order     │
+                │ Search Tool │              │       Tool          │              │ Query Tool  │
+                └──────┬──────┘              └──────────┬──────────┘              └──────┬──────┘
+                       │                                │                                 │
+                ┌──────▼──────┐              ┌──────────▼──────────┐              ┌──────▼──────┐
+                │ OpenSearch  │              │     DynamoDB        │              │  DynamoDB   │
+                │ (Products)  │              │     (Cart)          │              │  (Orders)   │
+                └─────────────┘              └─────────────────────┘              └─────────────┘
+```
+
+### Key Features
+
+#### 1. Strands AI Agent Integration
+- **Enhanced Conversational AI**: Powered by Strands SDK for sophisticated natural language understanding
+- **Custom Tool Integration**: Direct integration with E-Com67 platform APIs
+- **Context Management**: Maintains conversation history and user context across sessions
+- **Structured Responses**: Type-safe responses using Pydantic models
+
+#### 2. Custom Tools System
+
+**Product Search Tool:**
+- OpenSearch integration with fuzzy matching
+- Category and price filtering
+- Intelligent product recommendations with reasoning
+- Search suggestions for no-results scenarios
+
+**Cart Management Tool:**
+- Real-time cart operations (add, update, remove, clear)
+- Stock validation and availability checking
+- Current pricing updates and tax calculation
+- Cart state consistency validation
+
+**Order Query Tool:**
+- Order history retrieval with pagination
+- Comprehensive order tracking and status
+- User-specific access control
+- Date-based filtering and search
+
+**Knowledge Base Tool:**
+- RAG-powered information retrieval
+- Platform-specific help and documentation
+- Fallback static knowledge base for reliability
+- Multi-source information synthesis
+
+#### 3. Real-Time WebSocket Communication
+- Instant message delivery and typing indicators
+- Connection management with automatic reconnection
+- Session persistence and context restoration
+- Structured message formatting
 
 ### Models Used
 
-- **amazon.titan-text-express-v1:** Main chat model
+- **amazon.titan-text-express-v1:** Main conversational AI model
 - **amazon.titan-embed-text-v1:** Document embeddings for RAG
+- **Strands Agent SDK:** Enhanced agent capabilities and tool integration
+
+### Configuration
+
+The chat system automatically configures based on deployment stage:
+
+| Stage | Memory Limit | Tool Timeout | Debug Mode |
+|-------|-------------|--------------|------------|
+| Development | 10 messages | 15 seconds | Enabled |
+| Staging | 15 messages | 20 seconds | Enabled |
+| Production | 20 messages | 25 seconds | Disabled |
+
+### Frontend Integration
+
+The React ChatWidget provides a polished user experience:
+
+```jsx
+import ChatWidget from './components/ChatWidget'
+
+function App() {
+  return (
+    <div>
+      {/* Your app content */}
+      <ChatWidget />
+    </div>
+  )
+}
+```
+
+**Features:**
+- Minimizable chat window
+- Message history persistence
+- Product recommendation display
+- Typing indicators and connection status
+- Mobile-responsive design
 
 ### Knowledge Base (RAG)
 
@@ -723,6 +868,56 @@ python scripts/manage_knowledge_base.py upload path/to/document.txt
 
 # List documents
 python scripts/manage_knowledge_base.py list
+
+# Test knowledge base integration
+python lambda/chat/test_knowledge_base_enhanced.py
+```
+
+### Chat API Usage
+
+**WebSocket Connection:**
+```javascript
+const wsUrl = `wss://${websocketId}.execute-api.${region}.amazonaws.com/prod`
+const ws = new WebSocket(wsUrl)
+
+// Send message
+ws.send(JSON.stringify({
+  action: 'sendMessage',
+  message: 'Help me find a gaming laptop under $1000',
+  sessionId: 'session-123'
+}))
+```
+
+**Structured Response Example:**
+```json
+{
+  "type": "message",
+  "message": "I found 5 gaming laptops under $1000 for you!",
+  "data": {
+    "response_type": "product_list",
+    "products": [...],
+    "suggestions": ["Would you like to see more details?"],
+    "action_buttons": [
+      {"text": "View Details", "action": "view_product"},
+      {"text": "Add to Cart", "action": "add_to_cart"}
+    ]
+  },
+  "timestamp": 1703425200000,
+  "sessionId": "session-123"
+}
+```
+
+### Testing
+
+```bash
+# Test Strands agent setup
+python lambda/chat/test_strands_setup.py
+
+# Test tool integration
+python lambda/chat/test_tools_integration.py
+
+# Run comprehensive integration tests
+python -m pytest tests/test_strands_integration_comprehensive.py -v
 ```
 
 See [docs/knowledge-base-guide.md](docs/knowledge-base-guide.md) for complete guide.
@@ -789,12 +984,26 @@ pip install pytest hypothesis moto
 # Run all tests
 python -m pytest tests/ -v
 
-# Run specific test file
-python -m pytest tests/test_checkout_integration.py -v
+# Run specific test categories
+python -m pytest tests/test_chat*.py -v          # Chat functionality
+python -m pytest tests/test_strands*.py -v      # Strands integration
+python -m pytest tests/test_product*.py -v      # Product operations
+
+# Run integration tests
+python -m pytest tests/test_strands_integration_comprehensive.py -v
 
 # Run with coverage
 python -m pytest tests/ --cov=lambda
+
+# Run property-based tests
+python -m pytest tests/test_chat_properties.py -v
 ```
+
+**Test Categories:**
+- **Unit Tests**: Individual function and component testing
+- **Integration Tests**: End-to-end workflow testing
+- **Property-Based Tests**: Hypothesis-driven testing for edge cases
+- **Strands Agent Tests**: AI agent functionality and tool integration
 
 ### Frontend Tests
 
@@ -893,11 +1102,31 @@ headers = {
 2. Check Stripe dashboard for declined payments
 3. Verify webhook endpoint configuration
 
-#### Search Not Working
+#### Chat Issues
 
-1. Check OpenSearch domain status
-2. Verify products are synced to index
-3. Check search_sync Lambda logs
+**Agent Not Responding:**
+1. Check Strands SDK installation in layer
+2. Verify Bedrock model access permissions
+3. Check conversation history table access
+4. Verify tool integration with platform APIs
+
+**Tool Execution Failures:**
+1. Check DynamoDB table permissions
+2. Verify OpenSearch domain access
+3. Check user authentication and authorization
+4. Review tool-specific error logs
+
+**WebSocket Connection Issues:**
+1. Verify WebSocket API Gateway configuration
+2. Check connection authentication
+3. Review connection timeout settings
+4. Check for proper CORS configuration
+
+**Conversation Context Issues:**
+1. Check session ID generation and persistence
+2. Verify conversation history storage
+3. Review memory limit configuration
+4. Check conversation summary generation
 
 ### Useful Commands
 
@@ -906,13 +1135,22 @@ headers = {
 aws cloudformation describe-stacks --stack-name E-Com67-DataStack
 
 # View Lambda logs
-aws logs tail /aws/lambda/e-com67-product-crud --follow
+aws logs tail /aws/lambda/e-com67-chat --follow
 
 # Test API endpoint
 curl https://<api-id>.execute-api.ap-southeast-1.amazonaws.com/prod/products
 
 # Check DynamoDB table
 aws dynamodb scan --table-name e-com67-products --max-items 5
+
+# Test WebSocket connection
+wscat -c wss://<websocket-id>.execute-api.ap-southeast-1.amazonaws.com/prod
+
+# Test Strands agent configuration
+python lambda/chat/test_strands_setup.py
+
+# Run chat integration tests
+python -m pytest tests/test_strands_integration_comprehensive.py -v
 ```
 
 ---
