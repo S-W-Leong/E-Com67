@@ -86,15 +86,24 @@ const ChatWidget = () => {
 
   /**
    * Handle incoming messages from WebSocket
+   * Backend sends: { type, message, timestamp, session_id, data }
+   * We need to map to our internal format: { id, role, content, timestamp, metadata }
    */
-  const handleIncomingMessage = (message) => {
+  const handleIncomingMessage = (data) => {
     setIsTyping(false)
+
+    // Map backend format to frontend format
+    // Backend uses 'message' field, frontend uses 'content'
+    // Backend doesn't send 'role', we infer it from message type
+    const content = data.message || data.content || ''
+    const role = data.role || (data.type === 'error' ? 'system' : 'assistant')
+
     setMessages(prev => [...prev, {
-      id: message.messageId || `msg-${Date.now()}`,
-      role: message.role,
-      content: message.content,
-      timestamp: message.timestamp || Date.now(),
-      metadata: message.metadata
+      id: data.messageId || `msg-${Date.now()}`,
+      role: role,
+      content: content,
+      timestamp: data.timestamp || Date.now(),
+      metadata: data.data || data.metadata  // Backend sends additional data in 'data' field
     }])
   }
 

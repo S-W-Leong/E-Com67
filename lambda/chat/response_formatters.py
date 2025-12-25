@@ -12,7 +12,7 @@ from typing import Dict, List, Any, Optional, Union
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from .models import (
+from models import (
     # Product models
     ProductInfo, ProductRecommendation, ProductSearchResponse,
     # Cart models
@@ -711,7 +711,7 @@ def format_websocket_message(
             data=data
         )
         
-        return websocket_msg.dict(exclude_none=True)
+        return websocket_msg.model_dump(exclude_none=True)
         
     except Exception as e:
         logger.error(f"Error formatting WebSocket message: {str(e)}")

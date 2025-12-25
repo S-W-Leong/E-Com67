@@ -6,7 +6,7 @@ in the E-Com67 Strands AI Agent enhancement. These models ensure consistent
 data formatting across all agent interactions and tool operations.
 """
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import List, Optional, Dict, Any, Union
 from datetime import datetime
 from enum import Enum
@@ -33,14 +33,16 @@ class ProductInfo(BaseModel):
     brand: Optional[str] = Field(None, description="Product brand")
     sku: Optional[str] = Field(None, description="Stock keeping unit")
     
-    @validator('price')
-    def validate_price(cls, v):
+    @field_validator('price')
+    @classmethod
+    def validate_price(cls, v: float) -> float:
         if v < 0:
             raise ValueError('Price must be non-negative')
         return round(v, 2)
-    
-    @validator('rating')
-    def validate_rating(cls, v):
+
+    @field_validator('rating')
+    @classmethod
+    def validate_rating(cls, v: Optional[float]) -> Optional[float]:
         if v is not None and (v < 0 or v > 5):
             raise ValueError('Rating must be between 0 and 5')
         return v
@@ -56,8 +58,9 @@ class ProductRecommendation(BaseModel):
     similarity_factors: List[str] = Field(default_factory=list, description="Factors contributing to similarity")
     confidence_level: str = Field(default="medium", description="Confidence level (low, medium, high)")
     
-    @validator('relevance_score')
-    def validate_relevance_score(cls, v):
+    @field_validator('relevance_score')
+    @classmethod
+    def validate_relevance_score(cls, v: float) -> float:
         if not 0 <= v <= 1:
             raise ValueError('Relevance score must be between 0 and 1')
         return round(v, 3)
@@ -76,8 +79,9 @@ class ProductSearchResponse(BaseModel):
     search_time_ms: Optional[int] = Field(None, description="Search execution time in milliseconds")
     has_more: bool = Field(default=False, description="Whether more results are available")
     
-    @validator('total_count')
-    def validate_total_count(cls, v):
+    @field_validator('total_count')
+    @classmethod
+    def validate_total_count(cls, v: int) -> int:
         if v < 0:
             raise ValueError('Total count must be non-negative')
         return v
@@ -101,19 +105,18 @@ class CartItem(BaseModel):
     sku: Optional[str] = Field(None, description="Stock keeping unit")
     added_at: datetime = Field(default_factory=datetime.utcnow, description="When item was added")
     
-    @validator('subtotal')
-    def validate_subtotal(cls, v, values):
-        if 'price' in values and 'quantity' in values:
-            expected_subtotal = round(values['price'] * values['quantity'], 2)
-            if abs(v - expected_subtotal) > 0.01:  # Allow for small rounding differences
-                raise ValueError(f'Subtotal {v} does not match price * quantity {expected_subtotal}')
-        return round(v, 2)
-    
-    @validator('quantity')
-    def validate_quantity_against_stock(cls, v, values):
-        if 'stock_quantity' in values and v > values['stock_quantity']:
-            raise ValueError(f'Requested quantity {v} exceeds available stock {values["stock_quantity"]}')
-        return v
+    @model_validator(mode='after')
+    def validate_cart_item(self):
+        # Validate subtotal matches price * quantity
+        expected_subtotal = round(self.price * self.quantity, 2)
+        if abs(self.subtotal - expected_subtotal) > 0.01:
+            raise ValueError(f'Subtotal {self.subtotal} does not match price * quantity {expected_subtotal}')
+        self.subtotal = round(self.subtotal, 2)
+
+        # Validate quantity against stock
+        if self.quantity > self.stock_quantity:
+            raise ValueError(f'Requested quantity {self.quantity} exceeds available stock {self.stock_quantity}')
+        return self
 
 
 class CartSummary(BaseModel):
@@ -132,21 +135,19 @@ class CartSummary(BaseModel):
     validation_errors: List[str] = Field(default_factory=list)
     estimated_delivery: Optional[datetime] = Field(None, description="Estimated delivery date")
     
-    @validator('total_items')
-    def validate_total_items(cls, v, values):
-        if 'items' in values:
-            calculated_total = sum(item.quantity for item in values['items'])
-            if v != calculated_total:
-                raise ValueError(f'Total items {v} does not match sum of item quantities {calculated_total}')
-        return v
-    
-    @validator('total')
-    def validate_total_calculation(cls, v, values):
-        if all(key in values for key in ['subtotal', 'tax', 'shipping', 'discount']):
-            expected_total = values['subtotal'] + values['tax'] + values['shipping'] - values['discount']
-            if abs(v - expected_total) > 0.01:
-                raise ValueError(f'Total {v} does not match calculated total {expected_total}')
-        return round(v, 2)
+    @model_validator(mode='after')
+    def validate_cart_summary(self):
+        # Validate total_items matches sum of item quantities
+        calculated_total = sum(item.quantity for item in self.items)
+        if self.total_items != calculated_total:
+            raise ValueError(f'Total items {self.total_items} does not match sum of item quantities {calculated_total}')
+
+        # Validate total calculation
+        expected_total = self.subtotal + self.tax + self.shipping - self.discount
+        if abs(self.total - expected_total) > 0.01:
+            raise ValueError(f'Total {self.total} does not match calculated total {expected_total}')
+        self.total = round(self.total, 2)
+        return self
 
 
 class CartOperationType(str, Enum):
@@ -167,12 +168,12 @@ class CartOperation(BaseModel):
     cart_summary: CartSummary = Field(..., description="Updated cart state")
     operation_timestamp: datetime = Field(default_factory=datetime.utcnow)
     
-    @validator('quantity')
-    def validate_quantity_for_operation(cls, v, values):
-        if 'operation' in values and values['operation'] in [CartOperationType.ADD, CartOperationType.UPDATE]:
-            if v is None or v <= 0:
-                raise ValueError(f'Quantity must be positive for {values["operation"]} operations')
-        return v
+    @model_validator(mode='after')
+    def validate_quantity_for_operation(self):
+        if self.operation in [CartOperationType.ADD, CartOperationType.UPDATE]:
+            if self.quantity is None or self.quantity <= 0:
+                raise ValueError(f'Quantity must be positive for {self.operation} operations')
+        return self
 
 
 # ============================================================================
@@ -200,13 +201,13 @@ class OrderItem(BaseModel):
     sku: Optional[str] = Field(None, description="Stock keeping unit")
     category: Optional[str] = Field(None, description="Product category")
     
-    @validator('subtotal')
-    def validate_item_subtotal(cls, v, values):
-        if 'price' in values and 'quantity' in values:
-            expected_subtotal = round(values['price'] * values['quantity'], 2)
-            if abs(v - expected_subtotal) > 0.01:
-                raise ValueError(f'Item subtotal {v} does not match price * quantity {expected_subtotal}')
-        return round(v, 2)
+    @model_validator(mode='after')
+    def validate_item_subtotal(self):
+        expected_subtotal = round(self.price * self.quantity, 2)
+        if abs(self.subtotal - expected_subtotal) > 0.01:
+            raise ValueError(f'Item subtotal {self.subtotal} does not match price * quantity {expected_subtotal}')
+        self.subtotal = round(self.subtotal, 2)
+        return self
 
 
 class OrderInfo(BaseModel):
@@ -230,13 +231,13 @@ class OrderInfo(BaseModel):
     payment_method: str = Field(..., description="Payment method used")
     payment_status: str = Field(default="pending", description="Payment status")
     
-    @validator('total_amount')
-    def validate_order_total(cls, v, values):
-        if all(key in values for key in ['subtotal', 'tax', 'shipping', 'discount']):
-            expected_total = values['subtotal'] + values['tax'] + values['shipping'] - values['discount']
-            if abs(v - expected_total) > 0.01:
-                raise ValueError(f'Total amount {v} does not match calculated total {expected_total}')
-        return round(v, 2)
+    @model_validator(mode='after')
+    def validate_order_total(self):
+        expected_total = self.subtotal + self.tax + self.shipping - self.discount
+        if abs(self.total_amount - expected_total) > 0.01:
+            raise ValueError(f'Total amount {self.total_amount} does not match calculated total {expected_total}')
+        self.total_amount = round(self.total_amount, 2)
+        return self
 
 
 class OrderHistory(BaseModel):
@@ -249,11 +250,11 @@ class OrderHistory(BaseModel):
     has_more: bool = Field(..., description="Whether more pages exist")
     total_spent: float = Field(default=0, ge=0, description="Total amount spent by user")
     
-    @validator('total_orders')
-    def validate_total_orders(cls, v, values):
-        if 'orders' in values and len(values['orders']) > v:
+    @model_validator(mode='after')
+    def validate_total_orders(self):
+        if len(self.orders) > self.total_orders:
             raise ValueError('Number of orders in list cannot exceed total_orders')
-        return v
+        return self
 
 
 class OrderStatusUpdate(BaseModel):
@@ -306,8 +307,9 @@ class AgentResponse(BaseModel):
     action_buttons: List[Dict[str, str]] = Field(default_factory=list, description="Suggested action buttons")
     confidence_score: Optional[float] = Field(None, ge=0, le=1, description="Response confidence")
     
-    @validator('confidence_score')
-    def validate_confidence_score(cls, v):
+    @field_validator('confidence_score')
+    @classmethod
+    def validate_confidence_score(cls, v: Optional[float]) -> Optional[float]:
         if v is not None and not 0 <= v <= 1:
             raise ValueError('Confidence score must be between 0 and 1')
         return v
@@ -334,11 +336,7 @@ class ErrorResponse(BaseModel):
     retry_possible: bool = Field(default=True, description="Whether operation can be retried")
     session_id: str = Field(..., description="Session identifier")
     timestamp: datetime = Field(default_factory=datetime.utcnow)
-    debug_info: Optional[Dict[str, Any]] = Field(None, description="Debug information")
-    
-    class Config:
-        # Don't include debug_info in production responses
-        fields = {"debug_info": {"exclude": True}}
+    debug_info: Optional[Dict[str, Any]] = Field(None, exclude=True, description="Debug information")
 
 
 class ToolResult(BaseModel):
@@ -350,8 +348,9 @@ class ToolResult(BaseModel):
     execution_time: float = Field(..., description="Tool execution time in seconds")
     retry_count: int = Field(default=0, description="Number of retries attempted")
     
-    @validator('execution_time')
-    def validate_execution_time(cls, v):
+    @field_validator('execution_time')
+    @classmethod
+    def validate_execution_time(cls, v: float) -> float:
         if v < 0:
             raise ValueError('Execution time must be non-negative')
         return round(v, 3)
@@ -402,8 +401,9 @@ class WebSocketMessage(BaseModel):
     session_id: Optional[str] = Field(None, description="Session identifier")
     data: Optional[Dict[str, Any]] = Field(None, description="Additional message data")
     
-    @validator('timestamp')
-    def validate_timestamp(cls, v):
+    @field_validator('timestamp')
+    @classmethod
+    def validate_timestamp(cls, v: int) -> int:
         if v <= 0:
             raise ValueError('Timestamp must be positive')
         return v
@@ -422,13 +422,12 @@ class PaginationInfo(BaseModel):
     has_next: bool = Field(..., description="Whether next page exists")
     has_previous: bool = Field(..., description="Whether previous page exists")
     
-    @validator('total_pages')
-    def validate_total_pages(cls, v, values):
-        if 'total_items' in values and 'page_size' in values:
-            expected_pages = (values['total_items'] + values['page_size'] - 1) // values['page_size']
-            if v != expected_pages:
-                raise ValueError(f'Total pages {v} does not match calculated pages {expected_pages}')
-        return v
+    @model_validator(mode='after')
+    def validate_total_pages(self):
+        expected_pages = (self.total_items + self.page_size - 1) // self.page_size
+        if self.total_pages != expected_pages:
+            raise ValueError(f'Total pages {self.total_pages} does not match calculated pages {expected_pages}')
+        return self
 
 
 class SearchFilters(BaseModel):
@@ -440,9 +439,9 @@ class SearchFilters(BaseModel):
     rating_min: Optional[float] = Field(None, ge=0, le=5, description="Minimum rating")
     in_stock_only: bool = Field(default=True, description="Show only in-stock items")
     
-    @validator('price_max')
-    def validate_price_range(cls, v, values):
-        if v is not None and 'price_min' in values and values['price_min'] is not None:
-            if v < values['price_min']:
+    @model_validator(mode='after')
+    def validate_price_range(self):
+        if self.price_max is not None and self.price_min is not None:
+            if self.price_max < self.price_min:
                 raise ValueError('Maximum price must be greater than or equal to minimum price')
-        return v
+        return self

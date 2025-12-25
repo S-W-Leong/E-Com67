@@ -141,10 +141,10 @@ class StrandsAgentManager:
     def get_agent(self, user_context: Optional[Dict[str, Any]] = None):
         """
         Get or create a Strands agent instance.
-        
+
         Args:
             user_context: Optional user-specific context for personalization
-            
+
         Returns:
             Configured Strands agent instance
         """
@@ -152,7 +152,8 @@ class StrandsAgentManager:
             # Import Strands SDK components
             from strands import Agent
             from strands.models import BedrockModel
-            
+            from strands.agent.conversation_manager import SlidingWindowConversationManager
+
             # Create Bedrock model instance
             bedrock_model = BedrockModel(
                 model_id=self.config.bedrock_config.model_id,
@@ -161,23 +162,27 @@ class StrandsAgentManager:
                 streaming=self.config.bedrock_config.streaming,
                 region=self.config.bedrock_config.region
             )
-            
+
             # Get custom tools for the agent
             tools = self._get_custom_tools(user_context)
-            
-            # Create agent instance
+
+            # Create conversation manager with sliding window
+            conversation_manager = SlidingWindowConversationManager(
+                window_size=self.config.conversation_memory_limit * 2  # Each exchange has 2 messages (user + assistant)
+            )
+
+            # Create agent instance with correct Strands SDK API
             agent = Agent(
                 model=bedrock_model,
                 tools=tools,
                 system_prompt=self._get_contextualized_system_prompt(user_context),
-                memory_limit=self.config.conversation_memory_limit,
-                tool_timeout=self.config.tool_timeout_seconds
+                conversation_manager=conversation_manager
             )
-            
+
             logger.info(f"Created Strands agent with {len(tools)} tools")
-            
+
             return agent
-            
+
         except ImportError as e:
             logger.error(f"Strands SDK not available: {str(e)}")
             raise RuntimeError("Strands SDK is not properly installed or configured")
@@ -199,10 +204,10 @@ class StrandsAgentManager:
         
         try:
             # Import custom tool functions (decorated with @tool)
-            from .tools.product_search_tool import product_search, get_product_details, get_product_recommendations
-            from .tools.cart_management_tool import add_to_cart, get_cart_contents, update_cart_item, remove_from_cart, clear_cart
-            from .tools.order_query_tool import get_order_history, get_order_details, track_order, search_orders
-            from .tools.knowledge_base_tool import search_knowledge_base, get_platform_info, get_help_topics
+            from tools.product_search_tool import product_search, get_product_details, get_product_recommendations
+            from tools.cart_management_tool import add_to_cart, get_cart_contents, update_cart_item, remove_from_cart, clear_cart
+            from tools.order_query_tool import get_order_history, get_order_details, track_order, search_orders
+            from tools.knowledge_base_tool import search_knowledge_base, get_platform_info, get_help_topics
             
             # Add all tool functions to the tools list
             tools.extend([

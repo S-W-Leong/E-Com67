@@ -18,39 +18,136 @@ import boto3
 from botocore.exceptions import ClientError
 
 from strands import tool
-from ..models import KnowledgeResponse, KnowledgeSource
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from models import KnowledgeResponse, KnowledgeSource
 
 # Initialize logger
 logger = logging.getLogger(__name__)
 
 # Environment variables
-KNOWLEDGE_BASE_ID = os.environ.get("KNOWLEDGE_BASE_ID", "")
+OPENSEARCH_ENDPOINT = os.environ.get("OPENSEARCH_ENDPOINT", "")
 AWS_REGION = os.environ.get("AWS_REGION", "ap-southeast-1")
+EMBEDDING_MODEL_ID = os.environ.get('EMBEDDING_MODEL_ID', 'amazon.nova-2-multimodal-embeddings-v1:0')
+EMBEDDING_REGION = os.environ.get('EMBEDDING_REGION', 'us-east-1')  # Cross-region inference
+KNOWLEDGE_INDEX = 'knowledge-base'
 
 # Knowledge base configuration
 KNOWLEDGE_FRESHNESS_THRESHOLD_DAYS = 30  # Consider content stale after 30 days
 MAX_SOURCES_FOR_SYNTHESIS = 5  # Maximum sources to use for answer synthesis
 FALLBACK_CONFIDENCE_THRESHOLD = 0.3  # Minimum confidence for fallback responses
+EMBEDDING_DIMENSION = 1024  # Nova Multimodal Embeddings dimension
 
 # Initialize AWS services
-bedrock_agent_runtime = None
+bedrock_runtime = None
+opensearch_client = None
 
 
-def get_bedrock_agent_runtime():
-    """Get Bedrock Agent Runtime client with lazy initialization"""
-    global bedrock_agent_runtime
-    if bedrock_agent_runtime is None:
-        bedrock_agent_runtime = boto3.client('bedrock-agent-runtime', region_name=AWS_REGION)
-    return bedrock_agent_runtime
+def get_bedrock_runtime():
+    """Get Bedrock Runtime client with lazy initialization for cross-region inference"""
+    global bedrock_runtime
+    if bedrock_runtime is None:
+        bedrock_runtime = boto3.client('bedrock-runtime', region_name=EMBEDDING_REGION)
+    return bedrock_runtime
+
+
+def get_opensearch_client():
+    """Get OpenSearch client with lazy initialization"""
+    global opensearch_client
+    if opensearch_client is None:
+        try:
+            from opensearchpy import OpenSearch, RequestsHttpConnection
+            from requests_aws4auth import AWS4Auth
+            
+            # Set up AWS authentication for OpenSearch
+            host = OPENSEARCH_ENDPOINT.replace('https://', '')
+            region = AWS_REGION
+            service = 'es'  # For regular OpenSearch Service
+            credentials = boto3.Session().get_credentials()
+            awsauth = AWS4Auth(
+                credentials.access_key,
+                credentials.secret_key,
+                region,
+                service,
+                session_token=credentials.token
+            )
+            
+            opensearch_client = OpenSearch(
+                hosts=[{'host': host, 'port': 443}],
+                http_auth=awsauth,
+                use_ssl=True,
+                verify_certs=True,
+                connection_class=RequestsHttpConnection,
+                timeout=30
+            )
+        except ImportError as e:
+            logger.error(f"Failed to import OpenSearch client: {str(e)}")
+            opensearch_client = None
+    return opensearch_client
 
 
 class KnowledgeBaseTool:
-    """Enhanced knowledge base search tool for Strands agent with RAG integration"""
+    """Enhanced knowledge base search tool for Strands agent with RAG integration using Nova embeddings"""
     
     def __init__(self):
         """Initialize the knowledge base tool"""
         self.freshness_threshold = timedelta(days=KNOWLEDGE_FRESHNESS_THRESHOLD_DAYS)
         self.current_time = datetime.utcnow()
+    
+    def generate_query_embedding(self, query: str) -> Optional[List[float]]:
+        """Generate embedding for search query using Amazon Nova Multimodal Embeddings"""
+        try:
+            bedrock_client = get_bedrock_runtime()
+            if not bedrock_client:
+                logger.error("Bedrock runtime client not available")
+                return None
+            
+            # Prepare request for Bedrock (Nova format)
+            request_body = {
+                "taskType": "SINGLE_EMBEDDING",
+                "singleEmbeddingParams": {
+                    "embeddingPurpose": "GENERIC_QUERY",  # For query processing
+                    "embeddingDimension": EMBEDDING_DIMENSION,
+                    "text": {
+                        "truncationMode": "END",  # Truncate from end if text is too long
+                        "value": query[:8000]  # Nova has text length limits
+                    }
+                }
+            }
+            
+            # Call Bedrock with cross-region inference
+            response = bedrock_client.invoke_model(
+                modelId=EMBEDDING_MODEL_ID,
+                body=json.dumps(request_body),
+                contentType='application/json',
+                accept='application/json'
+            )
+            
+            # Parse response (Nova format)
+            response_body = json.loads(response['body'].read())
+            embeddings = response_body.get('embeddings', [])
+            
+            if not embeddings or len(embeddings) == 0:
+                logger.error("No embeddings returned from Nova model")
+                return None
+                
+            embedding = embeddings[0]['embedding']  # Get first (and only) embedding
+            
+            if len(embedding) != EMBEDDING_DIMENSION:
+                logger.error(f"Unexpected embedding dimension: {len(embedding)}, expected {EMBEDDING_DIMENSION}")
+                return None
+            
+            logger.debug(f"Generated query embedding with dimension {len(embedding)} using Nova model in {EMBEDDING_REGION}")
+            
+            return embedding
+            
+        except ClientError as e:
+            error_code = e.response['Error']['Code']
+            logger.error(f"Bedrock error generating query embedding ({error_code}): {str(e)}")
+            return None
+        except Exception as e:
+            logger.error(f"Error generating query embedding: {str(e)}")
+            return None
     
     def format_knowledge_source(self, source_data: Dict[str, Any], relevance_score: float = 0.0) -> KnowledgeSource:
         """
@@ -322,18 +419,18 @@ def search_knowledge_base(query: str, category: Optional[str] = None, limit: int
         # Initialize enhanced knowledge base tool
         kb_tool = KnowledgeBaseTool()
         
-        # Check if knowledge base is configured
-        if not KNOWLEDGE_BASE_ID:
-            logger.warning("Knowledge base ID not configured, using fallback")
+        # Check if OpenSearch is configured
+        if not OPENSEARCH_ENDPOINT:
+            logger.warning("OpenSearch endpoint not configured, using fallback")
             sources = kb_tool.get_fallback_knowledge(query, category)
         else:
             try:
-                # Use Bedrock Knowledge Base for retrieval with enhanced error handling
-                sources = kb_tool._search_bedrock_knowledge_base(query, category, limit)
+                # Use Nova embeddings with OpenSearch vector search
+                sources = kb_tool._search_opensearch_knowledge_base(query, category, limit)
                 
             except ClientError as e:
                 error_code = e.response.get('Error', {}).get('Code', 'Unknown')
-                logger.error(f"Bedrock knowledge base retrieval failed ({error_code}): {str(e)}")
+                logger.error(f"Nova embedding generation failed ({error_code}): {str(e)}")
                 
                 # Use fallback with appropriate confidence adjustment
                 sources = kb_tool.get_fallback_knowledge(query, category)
@@ -377,9 +474,9 @@ def search_knowledge_base(query: str, category: Optional[str] = None, limit: int
             search_time_ms=int((time.time() - start_time) * 1000)
         )
     
-    def _search_bedrock_knowledge_base(self, query: str, category: Optional[str], limit: int) -> List[KnowledgeSource]:
+    def _search_opensearch_knowledge_base(self, query: str, category: Optional[str], limit: int) -> List[KnowledgeSource]:
         """
-        Search Bedrock knowledge base with enhanced error handling.
+        Search OpenSearch knowledge base using Nova embeddings for vector similarity search.
         
         Args:
             query: Search query
@@ -387,73 +484,141 @@ def search_knowledge_base(query: str, category: Optional[str] = None, limit: int
             limit: Maximum results to return
             
         Returns:
-            List of knowledge sources from Bedrock
+            List of knowledge sources from OpenSearch
         """
-        bedrock_client = get_bedrock_agent_runtime()
+        opensearch_client = get_opensearch_client()
+        if not opensearch_client:
+            logger.error("OpenSearch client not available")
+            raise Exception("OpenSearch client not available")
         
-        # Build retrieval request
-        retrieval_request = {
-            'knowledgeBaseId': KNOWLEDGE_BASE_ID,
-            'retrievalQuery': {
-                'text': query
-            },
-            'retrievalConfiguration': {
-                'vectorSearchConfiguration': {
-                    'numberOfResults': limit
+        # Generate embedding for the query using Nova
+        query_embedding = self.generate_query_embedding(query)
+        if not query_embedding:
+            logger.error("Failed to generate query embedding")
+            raise Exception("Failed to generate query embedding")
+        
+        # Build OpenSearch query with vector similarity search
+        search_body = {
+            "size": limit,
+            "query": {
+                "bool": {
+                    "must": [
+                        {
+                            "knn": {
+                                "embedding": {
+                                    "vector": query_embedding,
+                                    "k": limit * 2  # Get more candidates for better filtering
+                                }
+                            }
+                        }
+                    ]
                 }
-            }
+            },
+            "_source": ["text", "source", "chunk_index", "timestamp", "metadata"]
         }
         
         # Add category filter if specified
         if category:
-            retrieval_request['retrievalConfiguration']['vectorSearchConfiguration']['filter'] = {
-                'equals': {
-                    'key': 'category',
-                    'value': category
+            # Try to match category in source path or metadata
+            search_body["query"]["bool"]["filter"] = [
+                {
+                    "bool": {
+                        "should": [
+                            {"wildcard": {"source": f"*{category}*"}},
+                            {"term": {"metadata.category": category}}
+                        ]
+                    }
                 }
-            }
+            ]
         
-        # Execute retrieval with timeout handling
         try:
-            response = bedrock_client.retrieve(**retrieval_request)
-        except ClientError as e:
-            if e.response.get('Error', {}).get('Code') == 'ThrottlingException':
-                logger.warning("Bedrock API throttled, using fallback")
-                raise e
-            elif e.response.get('Error', {}).get('Code') == 'ValidationException':
-                logger.error(f"Invalid request to Bedrock: {str(e)}")
-                raise e
-            else:
-                logger.error(f"Bedrock client error: {str(e)}")
-                raise e
+            # Execute search with timeout handling
+            response = opensearch_client.search(
+                index=KNOWLEDGE_INDEX,
+                body=search_body,
+                timeout='10s'
+            )
+        except Exception as e:
+            logger.error(f"OpenSearch query failed: {str(e)}")
+            raise e
         
-        # Process retrieval results
+        # Process search results
         sources = []
-        retrieval_results = response.get('retrievalResults', [])
+        search_hits = response.get('hits', {}).get('hits', [])
         
-        for result in retrieval_results:
-            content = result.get('content', {}).get('text', '')
-            metadata = result.get('metadata', {})
-            score = result.get('score', 0.0)
-            
-            # Skip empty or very short content
-            if len(content.strip()) < 10:
+        for hit in search_hits:
+            try:
+                source_data = hit.get('_source', {})
+                score = hit.get('_score', 0.0)
+                
+                # Skip empty or very short content
+                content = source_data.get('text', '').strip()
+                if len(content) < 10:
+                    continue
+                
+                # Normalize score to 0-1 range (OpenSearch scores can vary widely)
+                # Typical cosine similarity scores are between 0.5-1.0 for relevant content
+                normalized_score = min(max((score - 0.5) * 2, 0.0), 1.0)
+                
+                # Create knowledge source with enhanced metadata handling
+                metadata = source_data.get('metadata', {})
+                timestamp = source_data.get('timestamp', time.time())
+                
+                formatted_source_data = {
+                    'sourceId': f"os_{hit.get('_id', len(sources))}",
+                    'title': self._extract_title_from_source(source_data.get('source', '')),
+                    'content': content,
+                    'category': self._extract_category_from_source(source_data.get('source', ''), category),
+                    'lastUpdated': timestamp,
+                    'url': None  # OpenSearch doesn't store URLs in our current setup
+                }
+                
+                knowledge_source = self.format_knowledge_source(formatted_source_data, normalized_score)
+                sources.append(knowledge_source)
+                
+            except Exception as e:
+                logger.warning(f"Error processing search result: {str(e)}")
                 continue
-            
-            # Create knowledge source with enhanced metadata handling
-            source_data = {
-                'sourceId': metadata.get('sourceId', f"kb_{len(sources)}"),
-                'title': metadata.get('title', 'Knowledge Base Article'),
-                'content': content.strip(),
-                'category': metadata.get('category', category or 'general'),
-                'lastUpdated': metadata.get('lastUpdated', time.time()),
-                'url': metadata.get('url')
-            }
-            
-            knowledge_source = self.format_knowledge_source(source_data, score)
-            sources.append(knowledge_source)
         
+        logger.info(f"OpenSearch returned {len(sources)} relevant sources for query: {query}")
         return sources
+    
+    def _extract_title_from_source(self, source_path: str) -> str:
+        """Extract a readable title from the source file path"""
+        if not source_path:
+            return "Knowledge Base Article"
+        
+        # Get filename without extension
+        filename = source_path.split('/')[-1]
+        if '.' in filename:
+            filename = '.'.join(filename.split('.')[:-1])
+        
+        # Convert underscores/hyphens to spaces and title case
+        title = filename.replace('_', ' ').replace('-', ' ').title()
+        
+        return title if title else "Knowledge Base Article"
+    
+    def _extract_category_from_source(self, source_path: str, provided_category: Optional[str]) -> str:
+        """Extract category from source path or use provided category"""
+        if provided_category:
+            return provided_category
+        
+        # Try to extract category from path
+        path_lower = source_path.lower()
+        
+        # Common category keywords
+        if any(word in path_lower for word in ['ship', 'deliver']):
+            return 'shipping'
+        elif any(word in path_lower for word in ['return', 'refund']):
+            return 'returns'
+        elif any(word in path_lower for word in ['payment', 'billing']):
+            return 'payment'
+        elif any(word in path_lower for word in ['account', 'profile']):
+            return 'account'
+        elif any(word in path_lower for word in ['policy', 'terms']):
+            return 'policies'
+        else:
+            return 'general'
     
     def get_fallback_knowledge(self, query: str, category: Optional[str] = None) -> List[KnowledgeSource]:
         """

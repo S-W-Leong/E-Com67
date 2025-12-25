@@ -19,7 +19,9 @@ from boto3.dynamodb.conditions import Key, Attr
 from botocore.exceptions import ClientError
 
 from strands import tool
-from ..models import OrderHistory, OrderInfo, OrderItem, OrderTracking, OrderStatus
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from models import OrderHistory, OrderInfo, OrderItem, OrderTracking, OrderStatus
 
 # Initialize logger
 logger = logging.getLogger(__name__)

@@ -1,0 +1,18 @@
+{
+  "Variables": {
+    "POWERTOOLS_SERVICE_NAME": "chat",
+    "CHAT_HISTORY_TABLE_NAME": "e-com67-chat-history",
+    "EMBEDDING_MODEL_ID": "amazon.nova-2-multimodal-embeddings-v1:0",
+    "EMBEDDING_REGION": "us-east-1",
+    "POWERTOOLS_METRICS_NAMESPACE": "E-Com67",
+    "PRODUCTS_TABLE_NAME": "e-com67-products",
+    "BEDROCK_STREAMING": "false",
+    "OPENSEARCH_ENDPOINT": "https://search-e-com67-products-rjgfoxl4pok4barpbwmnjxhaiq.ap-southeast-1.es.amazonaws.com",
+    "BEDROCK_TEMPERATURE": "0.7",
+    "DEPLOYMENT_STAGE": "development",
+    "PLATFORM_VERSION": "1.0.0",
+    "BEDROCK_MAX_TOKENS": "4096",
+    "BEDROCK_MODEL_ID": "amazon.titan-text-express-v1",
+    "LOG_LEVEL": "INFO"
+  }
+}

@@ -16,7 +16,9 @@ from opensearchpy import OpenSearch, RequestsHttpConnection, AWSV4SignerAuth
 from botocore.exceptions import ClientError
 
 from strands import tool
-from ..models import ProductSearchResponse, ProductInfo, ProductRecommendation
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from models import ProductSearchResponse, ProductInfo, ProductRecommendation
 
 # Initialize logger
 logger = logging.getLogger(__name__)

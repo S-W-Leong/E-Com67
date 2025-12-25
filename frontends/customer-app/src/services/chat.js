@@ -25,14 +25,13 @@ class ChatService {
    * Get WebSocket URL from environment
    */
   getWebSocketUrl() {
-    const apiUrl = import.meta.env.VITE_API_BASE_URL
-    if (!apiUrl) {
-      throw new Error('VITE_API_BASE_URL not configured')
+    const wsUrl = import.meta.env.VITE_WEBSOCKET_URL
+    if (!wsUrl) {
+      throw new Error('VITE_WEBSOCKET_URL not configured')
     }
 
-    // Convert REST API URL to WebSocket URL
-    // https://xxxxx.execute-api.region.amazonaws.com/prod -> wss://xxxxx.execute-api.region.amazonaws.com/prod
-    return apiUrl.replace('https://', 'wss://').replace('/prod', '/prod/chat')
+    // Remove trailing slash if present
+    return wsUrl.replace(/\/$/, '')
   }
 
   /**

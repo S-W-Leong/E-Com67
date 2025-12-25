@@ -270,20 +270,19 @@ class ComputeStack(Stack):
         )
         
         # Add Bedrock permissions for AI chat and knowledge processing
+        # APAC inference profiles route to multiple regions, so we need broad permissions
         self.lambda_execution_role.add_to_policy(
             iam.PolicyStatement(
                 effect=iam.Effect.ALLOW,
                 actions=[
-                    "bedrock:InvokeModel"
+                    "bedrock:InvokeModel",
+                    "bedrock:InvokeModelWithResponseStream"
                 ],
                 resources=[
-                    # Local region models (ap-southeast-1)
-                    f"arn:aws:bedrock:{self.region}::foundation-model/amazon.titan-text-express-v1",
-                    f"arn:aws:bedrock:{self.region}::foundation-model/amazon.titan-text-lite-v1",
-                    f"arn:aws:bedrock:{self.region}::foundation-model/cohere.embed-english-v3",
-                    f"arn:aws:bedrock:{self.region}::foundation-model/cohere.embed-multilingual-v3",
-                    # Cross-region Nova embeddings (us-east-1)
-                    f"arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-2-multimodal-embeddings-v1:0"
+                    # Allow all Bedrock foundation models and inference profiles
+                    # APAC inference profiles can route to ap-southeast-1, ap-southeast-2, ap-northeast-1, etc.
+                    "arn:aws:bedrock:*::foundation-model/amazon.nova-*",
+                    "arn:aws:bedrock:*:*:inference-profile/apac.amazon.nova-*"
                 ]
             )
         )
@@ -475,8 +474,9 @@ class ComputeStack(Stack):
                 "CHAT_HISTORY_TABLE_NAME": Fn.import_value("E-Com67-ChatHistoryTableName"),
                 "PRODUCTS_TABLE_NAME": Fn.import_value("E-Com67-ProductsTableName"),
                 "OPENSEARCH_ENDPOINT": Fn.import_value("E-Com67-OpenSearchEndpoint"),
-                "BEDROCK_MODEL_ID": "amazon.titan-text-express-v1",
-                "EMBEDDING_MODEL_ID": "amazon.titan-embed-text-v1",
+                "BEDROCK_MODEL_ID": "apac.amazon.nova-lite-v1:0",
+                "EMBEDDING_MODEL_ID": "amazon.nova-2-multimodal-embeddings-v1:0",
+                "EMBEDDING_REGION": "us-east-1",  # Cross-region inference for Nova
                 "BEDROCK_TEMPERATURE": "0.7",
                 "BEDROCK_MAX_TOKENS": "4096",
                 "BEDROCK_STREAMING": "false",

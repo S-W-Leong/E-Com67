@@ -20,9 +20,9 @@ from aws_lambda_powertools.utilities.typing import LambdaContext
 from botocore.exceptions import ClientError
 
 # Import Strands configuration and models
-from .strands_config import StrandsAgentManager, StrandsAgentConfig
-from .models import AgentResponse, ErrorResponse, WebSocketMessage, WebSocketMessageType, ResponseType, ErrorType
-from .response_formatters import format_websocket_message, format_typing_indicator, format_agent_response, format_error_response
+from strands_config import StrandsAgentManager, StrandsAgentConfig
+from models import AgentResponse, ErrorResponse, WebSocketMessage, WebSocketMessageType, ResponseType, ErrorType
+from response_formatters import format_websocket_message, format_typing_indicator, format_agent_response, format_error_response
 
 # Initialize AWS Lambda Powertools
 logger = Logger()
@@ -454,22 +454,16 @@ def handle_connect(connection_id: str, event: Dict[str, Any]) -> Dict[str, Any]:
     try:
         # Extract user information from the connection (if authenticated)
         user_id = extract_user_id(event)
-        
+
         logger.info(f"WebSocket connection established: {connection_id} for user: {user_id}")
-        
-        # Send welcome message
-        welcome_message = {
-            'type': 'welcome',
-            'message': 'Welcome to E-Com67 AI Assistant! How can I help you today?',
-            'timestamp': int(time.time() * 1000)
-        }
-        
-        send_message_to_connection(connection_id, welcome_message)
-        
+
+        # Note: Cannot send messages during $connect - connection isn't fully established yet
+        # Welcome message will be sent by the client after connection is open
+
         metrics.add_metric(name="ChatConnections", unit=MetricUnit.Count, value=1)
-        
+
         return create_response(200, {'message': 'Connected successfully'})
-        
+
     except Exception as e:
         logger.exception(f"Error handling connection: {str(e)}")
         return create_response(500, {'error': 'Connection failed'})
@@ -511,13 +505,15 @@ def handle_send_message(connection_id: str, event: Dict[str, Any]) -> Dict[str, 
     """Enhanced message handling with Strands agent integration"""
     try:
         user_id = extract_user_id(event)
-        
+
         # Parse message body
         body = json.loads(event.get('body', '{}'))
-        user_message = body.get('message', '').strip()
+        # Support both 'message' and 'content' field names for flexibility
+        user_message = (body.get('message') or body.get('content') or '').strip()
         session_id = body.get('sessionId', str(uuid.uuid4()))
-        
+
         if not user_message:
+            logger.warning(f"Empty message received. Body: {body}")
             return create_response(400, {'error': 'Message cannot be empty'})
         
         logger.info(f"Processing message from user {user_id}: {user_message[:100]}...")
@@ -566,11 +562,14 @@ def handle_send_message(connection_id: str, event: Dict[str, Any]) -> Dict[str, 
                 result = agent(user_message)
             
             execution_time = time.time() - start_time
-            
+
             # Extract agent response and tool results
             agent_response_content = extract_agent_response_content(result)
             tool_results = extract_tool_results(result)
-            
+
+            # Debug logging for response extraction
+            logger.info(f"Extracted agent response content: {agent_response_content[:200] if agent_response_content else 'EMPTY'}...")
+
             # Format structured response
             structured_response = format_agent_response(
                 message=agent_response_content,
@@ -588,9 +587,11 @@ def handle_send_message(connection_id: str, event: Dict[str, Any]) -> Dict[str, 
                 message_type='message',
                 content=structured_response.message,
                 session_id=session_id,
-                data=structured_response.dict(exclude={'message', 'session_id'})
+                data=structured_response.model_dump(exclude={'message', 'session_id'})
             )
-            
+
+            # Debug logging for WebSocket response
+            logger.info(f"WebSocket response message field: {websocket_response.get('message', 'MISSING')[:200] if websocket_response.get('message') else 'EMPTY'}...")
             logger.info(f"Agent processed message in {execution_time:.2f}s using {len(tool_results)} tools")
             
         except Exception as agent_error:
@@ -610,7 +611,7 @@ def handle_send_message(connection_id: str, event: Dict[str, Any]) -> Dict[str, 
                 message_type='error',
                 content=error_response.error_message,
                 session_id=session_id,
-                data=error_response.dict(exclude={'error_message', 'session_id'})
+                data=error_response.model_dump(exclude={'error_message', 'session_id'})
             )
         
         finally:
@@ -742,32 +743,37 @@ def build_conversation_context(conversation_history: List[Dict[str, Any]],
 def extract_agent_response_content(agent_result: Any) -> str:
     """
     Extract the main response content from Strands agent result.
-    
+
+    The Strands SDK AgentResult class has a __str__ method that properly
+    extracts and concatenates all text content from the message.
+
     Args:
-        agent_result: Result from Strands agent call
-        
+        agent_result: Result from Strands agent call (AgentResult instance)
+
     Returns:
         Main response message content
     """
     try:
-        # Handle different possible result structures from Strands SDK
-        if hasattr(agent_result, 'message'):
-            if isinstance(agent_result.message, dict):
-                # Extract from message structure
-                content = agent_result.message.get('content', [])
-                if content and isinstance(content, list):
-                    return content[0].get('text', 'No response generated')
-                elif isinstance(content, str):
-                    return content
-            elif isinstance(agent_result.message, str):
-                return agent_result.message
-        
-        # Fallback: try to extract from string representation
-        if hasattr(agent_result, '__str__'):
-            return str(agent_result)
-        
+        # The AgentResult.__str__() method handles text extraction properly:
+        # It iterates through message.content array and extracts 'text' from each item
+        response_text = str(agent_result).strip()
+
+        if response_text:
+            return response_text
+
+        # Fallback: try to access message content directly if str() returns empty
+        if hasattr(agent_result, 'message') and isinstance(agent_result.message, dict):
+            content = agent_result.message.get('content', [])
+            if content and isinstance(content, list):
+                text_parts = []
+                for item in content:
+                    if isinstance(item, dict) and 'text' in item:
+                        text_parts.append(item.get('text', ''))
+                if text_parts:
+                    return '\n'.join(text_parts).strip()
+
         return "I processed your request but couldn't generate a proper response."
-        
+
     except Exception as e:
         logger.error(f"Error extracting agent response content: {str(e)}")
         return "I encountered an error generating a response."
@@ -1045,12 +1051,19 @@ def get_conversation_history(user_id: str, session_id: str, limit: int = 10) -> 
         return []
 
 
+def json_serial(obj):
+    """JSON serializer for objects not serializable by default json code"""
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    raise TypeError(f"Type {type(obj)} not serializable")
+
+
 def send_message_to_connection(connection_id: str, message: Dict[str, Any]) -> None:
     """Send message to WebSocket connection"""
     try:
         apigateway_management.post_to_connection(
             ConnectionId=connection_id,
-            Data=json.dumps(message)
+            Data=json.dumps(message, default=json_serial)
         )
         
         logger.debug(f"Sent message to connection {connection_id}")

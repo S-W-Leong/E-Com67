@@ -18,7 +18,9 @@ from boto3.dynamodb.conditions import Key, Attr
 from botocore.exceptions import ClientError
 
 from strands import tool
-from ..models import CartSummary, CartItem, CartOperation, CartOperationType
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from models import CartSummary, CartItem, CartOperation, CartOperationType
 
 # Initialize logger
 logger = logging.getLogger(__name__)
