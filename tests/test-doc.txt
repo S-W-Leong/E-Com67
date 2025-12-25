@@ -1,0 +1,1 @@
+Test document for knowledge base processing with Cohere embeddings.

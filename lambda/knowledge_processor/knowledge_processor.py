@@ -31,13 +31,14 @@ opensearch_client = None
 # Environment variables
 KNOWLEDGE_BASE_BUCKET = os.environ.get('KNOWLEDGE_BASE_BUCKET_NAME')
 OPENSEARCH_ENDPOINT = os.environ.get('OPENSEARCH_ENDPOINT')
-EMBEDDING_MODEL_ID = os.environ.get('EMBEDDING_MODEL_ID', 'amazon.titan-embed-text-v1')
+EMBEDDING_MODEL_ID = os.environ.get('EMBEDDING_MODEL_ID', 'amazon.nova-2-multimodal-embeddings-v1:0')
+EMBEDDING_REGION = os.environ.get('EMBEDDING_REGION', 'us-east-1')  # Cross-region inference
 KNOWLEDGE_INDEX = 'knowledge-base'
 
 # Constants
 MAX_CHUNK_SIZE = 1000
 CHUNK_OVERLAP = 200
-EMBEDDING_DIMENSION = 1536  # Amazon Titan embedding dimension
+EMBEDDING_DIMENSION = 1024  # Nova Multimodal Embeddings dimension (256, 512, or 1024)
 
 
 def _initialize_aws_clients():
@@ -48,20 +49,27 @@ def _initialize_aws_clients():
         s3_client = boto3.client('s3')
     
     if bedrock_runtime is None:
-        bedrock_runtime = boto3.client('bedrock-runtime')
+        # Use cross-region inference for Nova embeddings
+        bedrock_runtime = boto3.client('bedrock-runtime', region_name=EMBEDDING_REGION)
     
     if opensearch_client is None:
         # Import opensearch client from layer
         try:
             from opensearchpy import OpenSearch, RequestsHttpConnection
-            from aws_requests_auth.aws_auth import AWSRequestsAuth
+            from requests_aws4auth import AWS4Auth
             
             # Set up AWS authentication for OpenSearch
             host = OPENSEARCH_ENDPOINT.replace('https://', '')
             region = os.environ.get('AWS_REGION', 'ap-southeast-1')
             service = 'es'  # Changed from 'aoss' to 'es' for regular OpenSearch Service
             credentials = boto3.Session().get_credentials()
-            awsauth = AWSRequestsAuth(credentials, region, service)
+            awsauth = AWS4Auth(
+                credentials.access_key,
+                credentials.secret_key,
+                region,
+                service,
+                session_token=credentials.token
+            )
             
             opensearch_client = OpenSearch(
                 hosts=[{'host': host, 'port': 443}],
@@ -210,14 +218,22 @@ def process_chunk(document_key: str, chunk_index: int, chunk_text: str) -> bool:
 
 
 def generate_embedding(text: str) -> Optional[List[float]]:
-    """Generate embedding using Amazon Bedrock Titan"""
+    """Generate embedding using Amazon Nova Multimodal Embeddings via Bedrock"""
     try:
-        # Prepare request for Bedrock
+        # Prepare request for Bedrock (Nova format)
         request_body = {
-            "inputText": text
+            "taskType": "SINGLE_EMBEDDING",
+            "singleEmbeddingParams": {
+                "embeddingPurpose": "GENERIC_INDEX",  # For document indexing
+                "embeddingDimension": EMBEDDING_DIMENSION,
+                "text": {
+                    "truncationMode": "END",  # Truncate from end if text is too long
+                    "value": text[:8000]  # Nova has text length limits
+                }
+            }
         }
         
-        # Call Bedrock
+        # Call Bedrock with cross-region inference
         response = bedrock_runtime.invoke_model(
             modelId=EMBEDDING_MODEL_ID,
             body=json.dumps(request_body),
@@ -225,15 +241,21 @@ def generate_embedding(text: str) -> Optional[List[float]]:
             accept='application/json'
         )
         
-        # Parse response
+        # Parse response (Nova format)
         response_body = json.loads(response['body'].read())
-        embedding = response_body.get('embedding', [])
+        embeddings = response_body.get('embeddings', [])
+        
+        if not embeddings or len(embeddings) == 0:
+            logger.error("No embeddings returned from Nova model")
+            return None
+            
+        embedding = embeddings[0]['embedding']  # Get first (and only) embedding
         
         if len(embedding) != EMBEDDING_DIMENSION:
             logger.error(f"Unexpected embedding dimension: {len(embedding)}, expected {EMBEDDING_DIMENSION}")
             return None
         
-        logger.debug(f"Generated embedding with dimension {len(embedding)}")
+        logger.debug(f"Generated embedding with dimension {len(embedding)} using Nova model in {EMBEDDING_REGION}")
         metrics.add_metric(name="EmbeddingsGenerated", unit=MetricUnit.Count, value=1)
         
         return embedding

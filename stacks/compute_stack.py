@@ -21,6 +21,8 @@ from aws_cdk import (
     aws_sqs as sqs,
     aws_sns as sns,
     aws_sns_subscriptions as sns_subscriptions,
+    aws_s3 as s3,
+    aws_s3_notifications as s3n,
     aws_secretsmanager as secretsmanager,
     aws_logs as logs,
     CfnOutput,
@@ -267,7 +269,7 @@ class ComputeStack(Stack):
             )
         )
         
-        # Add Bedrock permissions for AI chat
+        # Add Bedrock permissions for AI chat and knowledge processing
         self.lambda_execution_role.add_to_policy(
             iam.PolicyStatement(
                 effect=iam.Effect.ALLOW,
@@ -275,9 +277,13 @@ class ComputeStack(Stack):
                     "bedrock:InvokeModel"
                 ],
                 resources=[
+                    # Local region models (ap-southeast-1)
                     f"arn:aws:bedrock:{self.region}::foundation-model/amazon.titan-text-express-v1",
                     f"arn:aws:bedrock:{self.region}::foundation-model/amazon.titan-text-lite-v1",
-                    f"arn:aws:bedrock:{self.region}::foundation-model/amazon.titan-embed-text-v1"
+                    f"arn:aws:bedrock:{self.region}::foundation-model/cohere.embed-english-v3",
+                    f"arn:aws:bedrock:{self.region}::foundation-model/cohere.embed-multilingual-v3",
+                    # Cross-region Nova embeddings (us-east-1)
+                    f"arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-2-multimodal-embeddings-v1:0"
                 ]
             )
         )
@@ -293,6 +299,19 @@ class ComputeStack(Stack):
                 ],
                 resources=[
                     f"{Fn.import_value('E-Com67-KnowledgeBaseBucketArn')}/*"
+                ]
+            )
+        )
+        
+        # Add S3 ListBucket permission for knowledge base (required for listing objects)
+        self.lambda_execution_role.add_to_policy(
+            iam.PolicyStatement(
+                effect=iam.Effect.ALLOW,
+                actions=[
+                    "s3:ListBucket"
+                ],
+                resources=[
+                    Fn.import_value('E-Com67-KnowledgeBaseBucketArn')
                 ]
             )
         )
@@ -484,7 +503,8 @@ class ComputeStack(Stack):
             environment={
                 "KNOWLEDGE_BASE_BUCKET_NAME": Fn.import_value("E-Com67-KnowledgeBaseBucketName"),
                 "OPENSEARCH_ENDPOINT": Fn.import_value("E-Com67-OpenSearchEndpoint"),
-                "EMBEDDING_MODEL_ID": "amazon.titan-embed-text-v1",
+                "EMBEDDING_MODEL_ID": "amazon.nova-2-multimodal-embeddings-v1:0",
+                "EMBEDDING_REGION": "us-east-1",  # Cross-region inference for Nova embeddings
                 "POWERTOOLS_SERVICE_NAME": "knowledge-processor",
                 "POWERTOOLS_METRICS_NAMESPACE": "E-Com67",
                 "LOG_LEVEL": "INFO"
@@ -494,7 +514,8 @@ class ComputeStack(Stack):
             memory_size=1024  # More memory for processing large documents
         )
         
-        # Note: S3 bucket notifications will be configured separately to avoid circular dependencies
+        # Configure S3 bucket notifications for knowledge processor
+        self._configure_s3_notifications()
         
         # Knowledge manager function for managing knowledge base documents
         self.knowledge_manager_function = _lambda.Function(
@@ -830,6 +851,28 @@ class ComputeStack(Stack):
                 level=sfn.LogLevel.ALL,
                 include_execution_data=True
             )
+        )
+
+    def _configure_s3_notifications(self):
+        """Configure S3 bucket notifications to trigger knowledge processor"""
+        # Import S3 bucket from data stack
+        knowledge_base_bucket = s3.Bucket.from_bucket_name(
+            self, "ImportedKnowledgeBaseBucket",
+            bucket_name=Fn.import_value("E-Com67-KnowledgeBaseBucketName")
+        )
+        
+        # Add S3 event notification to trigger knowledge processor
+        knowledge_base_bucket.add_event_notification(
+            s3.EventType.OBJECT_CREATED,
+            s3n.LambdaDestination(self.knowledge_processor_function),
+            s3.NotificationKeyFilter(prefix="documents/")  # Only trigger for documents/ prefix
+        )
+        
+        # Add S3 event notification for object removal
+        knowledge_base_bucket.add_event_notification(
+            s3.EventType.OBJECT_REMOVED,
+            s3n.LambdaDestination(self.knowledge_processor_function),
+            s3.NotificationKeyFilter(prefix="documents/")  # Only trigger for documents/ prefix
         )
 
     def _configure_sns_subscriptions(self):
