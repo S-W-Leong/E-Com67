@@ -194,6 +194,28 @@ class PipelineStack(Stack):
                     ),
                 ],
             ),
+            
+            # Configure asset publishing to use compatible cdk-assets version
+            asset_publishing_code_build_defaults=pipelines.CodeBuildOptions(
+                build_environment=codebuild.BuildEnvironment(
+                    # Use standard image with Python support
+                    build_image=codebuild.LinuxBuildImage.STANDARD_7_0,
+                    # Use medium compute type for faster builds
+                    compute_type=codebuild.ComputeType.MEDIUM,
+                ),
+                # Install compatible cdk-assets version
+                partial_build_spec=codebuild.BuildSpec.from_object({
+                    "version": "0.2",
+                    "phases": {
+                        "install": {
+                            "commands": [
+                                # Install cdk-assets version compatible with CDK 2.233.0
+                                "npm install -g cdk-assets@latest"
+                            ]
+                        }
+                    }
+                }),
+            ),
         )
 
         # Add the deployment stage
