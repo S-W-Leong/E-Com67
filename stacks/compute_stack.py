@@ -78,7 +78,7 @@ class ComputeStack(Stack):
             layer_version_name="e-com67-powertools",
             code=_lambda.Code.from_asset("layers/powertools"),
             compatible_runtimes=[_lambda.Runtime.PYTHON_3_9, _lambda.Runtime.PYTHON_3_10],
-            compatible_architectures=[_lambda.Architecture.ARM_64],
+            compatible_architectures=[_lambda.Architecture.X86_64],
             description="AWS Lambda Powertools for structured logging and tracing",
             removal_policy=self.removal_policy
         )
@@ -89,7 +89,7 @@ class ComputeStack(Stack):
             layer_version_name="e-com67-utils",
             code=_lambda.Code.from_asset("layers/utils"),
             compatible_runtimes=[_lambda.Runtime.PYTHON_3_9, _lambda.Runtime.PYTHON_3_10],
-            compatible_architectures=[_lambda.Architecture.ARM_64],
+            compatible_architectures=[_lambda.Architecture.X86_64],
             description="Common utilities and shared business logic",
             removal_policy=self.removal_policy
         )
@@ -100,7 +100,7 @@ class ComputeStack(Stack):
             layer_version_name="e-com67-stripe",
             code=_lambda.Code.from_asset("layers/stripe"),
             compatible_runtimes=[_lambda.Runtime.PYTHON_3_9, _lambda.Runtime.PYTHON_3_10],
-            compatible_architectures=[_lambda.Architecture.ARM_64],
+            compatible_architectures=[_lambda.Architecture.X86_64],
             description="Stripe SDK for payment processing integration",
             removal_policy=self.removal_policy
         )
@@ -111,19 +111,19 @@ class ComputeStack(Stack):
             layer_version_name="e-com67-opensearch",
             code=_lambda.Code.from_asset("layers/opensearch"),
             compatible_runtimes=[_lambda.Runtime.PYTHON_3_9, _lambda.Runtime.PYTHON_3_10],
-            compatible_architectures=[_lambda.Architecture.ARM_64],
+            compatible_architectures=[_lambda.Architecture.X86_64],
             description="OpenSearch Python client for search functionality",
             removal_policy=self.removal_policy
         )
         
         # Strands SDK layer for AI agent enhancement
-        # Note: Dependencies are built by the CI/CD pipeline with proper Linux ARM64 binaries
+        # Note: Dependencies are built by the CI/CD pipeline with proper Linux x86_64 binaries
         self.strands_layer = _lambda.LayerVersion(
             self, "StrandsLayer",
             layer_version_name="e-com67-strands",
             code=_lambda.Code.from_asset("layers/strands"),
             compatible_runtimes=[_lambda.Runtime.PYTHON_3_9, _lambda.Runtime.PYTHON_3_10],
-            compatible_architectures=[_lambda.Architecture.ARM_64],
+            compatible_architectures=[_lambda.Architecture.X86_64],
             description="Strands SDK for enhanced AI agent capabilities (Pipeline built)",
             removal_policy=self.removal_policy
         )
@@ -337,7 +337,7 @@ class ComputeStack(Stack):
             self, "ProductCrudFunction",
             function_name="e-com67-product-crud",
             runtime=_lambda.Runtime.PYTHON_3_9,
-            architecture=_lambda.Architecture.ARM_64,
+            architecture=_lambda.Architecture.X86_64,
             handler="product_crud.handler",
             code=_lambda.Code.from_asset("lambda/product_crud"),
             layers=[self.powertools_layer, self.utils_layer],
@@ -364,7 +364,7 @@ class ComputeStack(Stack):
             self, "CartFunction",
             function_name="e-com67-cart",
             runtime=_lambda.Runtime.PYTHON_3_9,
-            architecture=_lambda.Architecture.ARM_64,
+            architecture=_lambda.Architecture.X86_64,
             handler="cart.handler",
             code=_lambda.Code.from_asset("lambda/cart"),
             layers=[self.powertools_layer, self.utils_layer],
@@ -392,7 +392,7 @@ class ComputeStack(Stack):
             self, "PaymentFunction",
             function_name="e-com67-payment",
             runtime=_lambda.Runtime.PYTHON_3_9,
-            architecture=_lambda.Architecture.ARM_64,
+            architecture=_lambda.Architecture.X86_64,
             handler="payment.handler",
             code=_lambda.Code.from_asset("lambda/payment"),
             layers=[self.powertools_layer, self.utils_layer, self.stripe_layer],
@@ -415,7 +415,7 @@ class ComputeStack(Stack):
             self, "OrderProcessorFunction",
             function_name="e-com67-order-processor",
             runtime=_lambda.Runtime.PYTHON_3_9,
-            architecture=_lambda.Architecture.ARM_64,
+            architecture=_lambda.Architecture.X86_64,
             handler="order_processor.handler",
             code=_lambda.Code.from_asset("lambda/order_processor"),
             layers=[self.powertools_layer, self.utils_layer],
@@ -448,7 +448,7 @@ class ComputeStack(Stack):
             self, "OrdersFunction",
             function_name="e-com67-orders",
             runtime=_lambda.Runtime.PYTHON_3_9,
-            architecture=_lambda.Architecture.ARM_64,
+            architecture=_lambda.Architecture.X86_64,
             handler="orders.handler",
             code=_lambda.Code.from_asset("lambda/orders"),
             layers=[self.powertools_layer, self.utils_layer],
@@ -477,7 +477,7 @@ class ComputeStack(Stack):
             self, "ChatFunction",
             function_name="e-com67-chat",
             runtime=_lambda.Runtime.PYTHON_3_10,
-            architecture=_lambda.Architecture.ARM_64,
+            architecture=_lambda.Architecture.X86_64,
             handler="chat.handler",
             code=_lambda.Code.from_asset("lambda/chat"),
             layers=[self.powertools_layer, self.utils_layer, self.strands_layer, self.opensearch_layer],
@@ -508,7 +508,7 @@ class ComputeStack(Stack):
             self, "KnowledgeProcessorFunction",
             function_name="e-com67-knowledge-processor",
             runtime=_lambda.Runtime.PYTHON_3_9,
-            architecture=_lambda.Architecture.ARM_64,
+            architecture=_lambda.Architecture.X86_64,
             handler="knowledge_processor.handler",
             code=_lambda.Code.from_asset("lambda/knowledge_processor"),
             layers=[self.powertools_layer, self.utils_layer, self.opensearch_layer],
@@ -535,7 +535,7 @@ class ComputeStack(Stack):
             self, "KnowledgeManagerFunction",
             function_name="e-com67-knowledge-manager",
             runtime=_lambda.Runtime.PYTHON_3_9,
-            architecture=_lambda.Architecture.ARM_64,
+            architecture=_lambda.Architecture.X86_64,
             handler="knowledge_manager.handler",
             code=_lambda.Code.from_asset("lambda/knowledge_manager"),
             layers=[self.powertools_layer, self.utils_layer],
@@ -615,7 +615,7 @@ class ComputeStack(Stack):
             self, "EmailNotificationFunction",
             function_name="e-com67-email-notification",
             runtime=_lambda.Runtime.PYTHON_3_9,
-            architecture=_lambda.Architecture.ARM_64,
+            architecture=_lambda.Architecture.X86_64,
             handler="email_notification.handler",
             code=_lambda.Code.from_asset("lambda/email_notification"),
             layers=[self.powertools_layer, self.utils_layer],
@@ -637,7 +637,7 @@ class ComputeStack(Stack):
             self, "NotificationOrchestratorFunction",
             function_name="e-com67-notification-orchestrator",
             runtime=_lambda.Runtime.PYTHON_3_9,
-            architecture=_lambda.Architecture.ARM_64,
+            architecture=_lambda.Architecture.X86_64,
             handler="notification_orchestrator.handler",
             code=_lambda.Code.from_asset("lambda/notification_orchestrator"),
             layers=[self.powertools_layer, self.utils_layer],
@@ -681,7 +681,7 @@ class ComputeStack(Stack):
             self, "SearchSyncFunction",
             function_name="e-com67-search-sync",
             runtime=_lambda.Runtime.PYTHON_3_9,
-            architecture=_lambda.Architecture.ARM_64,
+            architecture=_lambda.Architecture.X86_64,
             handler="search_sync.handler",
             code=_lambda.Code.from_asset("lambda/search_sync"),
             layers=[self.powertools_layer, self.utils_layer, self.opensearch_layer],
@@ -714,7 +714,7 @@ class ComputeStack(Stack):
             self, "SearchFunction",
             function_name="e-com67-search",
             runtime=_lambda.Runtime.PYTHON_3_9,
-            architecture=_lambda.Architecture.ARM_64,
+            architecture=_lambda.Architecture.X86_64,
             handler="search.handler",
             code=_lambda.Code.from_asset("lambda/search"),
             layers=[self.powertools_layer, self.utils_layer, self.opensearch_layer],
