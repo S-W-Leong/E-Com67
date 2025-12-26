@@ -129,7 +129,7 @@ class PipelineStack(Stack):
             cross_account_keys=False,
 
             # Synth step - builds the CDK app and Lambda layers
-            # IMPORTANT: Strands layer requires Linux ARM64 binaries for Lambda compatibility
+            # IMPORTANT: All layers built for x86_64 architecture to match Lambda functions
             synth=pipelines.ShellStep(
                 "Synth",
                 input=source,
@@ -153,9 +153,11 @@ class PipelineStack(Stack):
                     # OpenSearch layer
                     "pip install -r layers/opensearch/requirements.txt -t layers/opensearch/python/ --upgrade",
 
-                    # Strands layer (use Docker to build for ARM64 architecture)
-                    "echo 'Building Strands layer for ARM64 using Docker...'",
-                    "docker run --rm -v $(pwd)/layers/strands:/workspace -w /workspace --platform linux/arm64 python:3.10-slim bash -c 'pip install -r requirements-minimal.txt -t python/ --no-cache-dir && find python -name \"*.pyc\" -delete && find python -name \"__pycache__\" -type d -exec rm -rf {} + || true'",
+                    # Strands layer (standard pip install - architecture-agnostic)
+                    "echo 'Building Strands layer...'",
+                    "pip install -r layers/strands/requirements-minimal.txt -t layers/strands/python/ --upgrade",
+                    "find layers/strands/python -name '*.pyc' -delete",
+                    "find layers/strands/python -name '__pycache__' -type d -exec rm -rf {} + || true",
 
                     # Synthesize CDK
                     "echo 'Synthesizing CDK...'",
@@ -168,12 +170,10 @@ class PipelineStack(Stack):
             # Use a specific CodeBuild environment for layer builds
             code_build_defaults=pipelines.CodeBuildOptions(
                 build_environment=codebuild.BuildEnvironment(
-                    # Use standard image with Python support and Docker
+                    # Use standard image with Python support
                     build_image=codebuild.LinuxBuildImage.STANDARD_7_0,
-                    # Use medium compute for Docker builds
+                    # Use medium compute type for faster builds
                     compute_type=codebuild.ComputeType.MEDIUM,
-                    # Enable privileged mode for Docker
-                    privileged=True,
                 ),
                 # Grant permissions needed for deployment
                 role_policy=[
