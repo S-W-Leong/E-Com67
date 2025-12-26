@@ -117,14 +117,14 @@ class ComputeStack(Stack):
         )
         
         # Strands SDK layer for AI agent enhancement
-        # Note: Dependencies are built by the CI/CD pipeline with proper Linux x86_64 binaries
+        # Note: Built with Docker using Linux x86_64 binaries for Lambda compatibility
         self.strands_layer = _lambda.LayerVersion(
             self, "StrandsLayer",
             layer_version_name="e-com67-strands",
             code=_lambda.Code.from_asset("layers/strands"),
             compatible_runtimes=[_lambda.Runtime.PYTHON_3_9, _lambda.Runtime.PYTHON_3_10],
             compatible_architectures=[_lambda.Architecture.X86_64],
-            description="Strands SDK for enhanced AI agent capabilities (Pipeline built)",
+            description="Strands SDK v1.20.0 with Linux x86_64 binaries (Docker built)",
             removal_policy=self.removal_policy
         )
 
