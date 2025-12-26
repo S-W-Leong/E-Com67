@@ -113,16 +113,16 @@ class PipelineStack(Stack):
             trigger=cpactions.CodeCommitTrigger.EVENTS
         )
 
-        # Create the CDK Pipeline with self-mutation enabled temporarily
-        # This allows the pipeline to update itself when pipeline code changes
+        # Create the CDK Pipeline with self-mutation disabled
+        # Pipeline changes require manual deployment to avoid circular dependencies
         pipeline = pipelines.CodePipeline(
             self,
             "E-Com67-Pipeline",
             pipeline_name="e-com67-pipeline",
 
-            # Enable self-mutation temporarily to fix asset issues
-            # Pipeline will update itself with correct asset references
-            self_mutation=True,
+            # Disable self-mutation - pipeline updates are done manually
+            # This prevents circular dependency issues during pipeline updates
+            self_mutation=False,
 
             # Cross-account not needed for single account deployment
             cross_account_keys=False,
