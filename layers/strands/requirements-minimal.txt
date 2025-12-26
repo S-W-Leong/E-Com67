@@ -1,0 +1,29 @@
+# Core Strands packages only
+strands-agents==1.20.0
+strands-agents-tools==0.2.18
+
+# Essential dependencies only
+pydantic>=2.4.0,<3.0.0
+typing-extensions>=4.13.2,<5.0.0
+
+# JSON schema and validation
+jsonschema>=4.0.0,<5.0.0
+
+# Date utilities
+python-dateutil>=2.8.0
+
+# Other essential packages
+docstring-parser>=0.15,<1.0
+certifi>=2024.07.04
+six>=1.5
+jmespath>=0.7.1,<2.0.0
+urllib3>=1.25.4,<1.27
+idna>=2.5,<4
+charset-normalizer>=2,<4
+
+# MCP (minimal)
+mcp>=1.11.0,<2.0.0
+
+# OpenTelemetry (minimal)
+opentelemetry-api>=1.30.0,<2.0.0
+opentelemetry-sdk>=1.30.0,<2.0.0

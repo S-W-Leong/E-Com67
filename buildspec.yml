@@ -1,0 +1,75 @@
+# E-Com67 Platform Build Specification
+#
+# This buildspec is used by CodeBuild to:
+# 1. Install dependencies
+# 2. Build Lambda layers
+# 3. Synthesize CDK templates
+#
+# Note: When using CDK Pipelines, this file serves as documentation
+# and can be used for manual builds. The pipeline generates its own
+# build commands based on the ShellStep configuration.
+
+version: 0.2
+
+env:
+  variables:
+    # Python version for Lambda compatibility
+    PYTHON_VERSION: "3.10"
+
+phases:
+  install:
+    runtime-versions:
+      python: 3.10
+      nodejs: 18
+    commands:
+      - echo "Installing dependencies..."
+      # Install CDK CLI globally
+      - npm install -g aws-cdk
+      # Install Python dependencies for CDK
+      - pip install -r requirements.txt
+
+  pre_build:
+    commands:
+      - echo "Building Lambda layers..."
+
+      # Powertools layer
+      - echo "Building powertools layer..."
+      - pip install -r layers/powertools/requirements.txt -t layers/powertools/python/ --upgrade
+
+      # Stripe layer
+      - echo "Building stripe layer..."
+      - pip install -r layers/stripe/requirements.txt -t layers/stripe/python/ --upgrade
+
+      # OpenSearch layer
+      - echo "Building opensearch layer..."
+      - pip install -r layers/opensearch/requirements.txt -t layers/opensearch/python/ --upgrade
+
+      # Strands layer (using minimal requirements for smaller package size)
+      - echo "Building strands layer..."
+      - pip install -r layers/strands/requirements-minimal.txt -t layers/strands/python/ --upgrade
+
+      # Clean up unnecessary files to reduce layer size
+      - echo "Cleaning up layers..."
+      - find layers -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+      - find layers -type d -name "*.dist-info" -exec rm -rf {} + 2>/dev/null || true
+      - find layers -type d -name "tests" -exec rm -rf {} + 2>/dev/null || true
+
+  build:
+    commands:
+      - echo "Synthesizing CDK..."
+      - cdk synth
+
+  post_build:
+    commands:
+      - echo "Build completed on $(date)"
+
+artifacts:
+  # Output the CDK cloud assembly
+  base-directory: cdk.out
+  files:
+    - "**/*"
+
+cache:
+  paths:
+    # Cache pip packages to speed up subsequent builds
+    - "/root/.cache/pip/**/*"

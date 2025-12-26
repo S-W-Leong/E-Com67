@@ -8,6 +8,7 @@ AI agent that replaces the existing Bedrock implementation in the E-Com67 platfo
 import os
 import json
 import logging
+import sys
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass
 from enum import Enum
@@ -149,43 +150,91 @@ class StrandsAgentManager:
             Configured Strands agent instance
         """
         try:
-            # Import Strands SDK components
-            from strands import Agent
-            from strands.models import BedrockModel
-            from strands.agent.conversation_manager import SlidingWindowConversationManager
+            # Import Strands SDK components with detailed error reporting
+            try:
+                from strands import Agent
+                logger.debug("✓ Successfully imported Agent from strands")
+            except ImportError as e:
+                logger.error(f"Failed to import Agent: {e}")
+                raise ImportError(f"Cannot import Agent from strands: {e}")
+            
+            try:
+                from strands.models import BedrockModel
+                logger.debug("✓ Successfully imported BedrockModel from strands.models")
+            except ImportError as e:
+                logger.error(f"Failed to import BedrockModel: {e}")
+                raise ImportError(f"Cannot import BedrockModel from strands.models: {e}")
+            
+            try:
+                from strands.agent.conversation_manager import SlidingWindowConversationManager
+                logger.debug("✓ Successfully imported SlidingWindowConversationManager")
+            except ImportError as e:
+                logger.error(f"Failed to import SlidingWindowConversationManager: {e}")
+                raise ImportError(f"Cannot import SlidingWindowConversationManager: {e}")
 
             # Create Bedrock model instance
-            bedrock_model = BedrockModel(
-                model_id=self.config.bedrock_config.model_id,
-                temperature=self.config.bedrock_config.temperature,
-                max_tokens=self.config.bedrock_config.max_tokens,
-                streaming=self.config.bedrock_config.streaming,
-                region=self.config.bedrock_config.region
-            )
+            try:
+                bedrock_model = BedrockModel(
+                    model_id=self.config.bedrock_config.model_id,
+                    temperature=self.config.bedrock_config.temperature,
+                    max_tokens=self.config.bedrock_config.max_tokens,
+                    streaming=self.config.bedrock_config.streaming,
+                    region=self.config.bedrock_config.region
+                )
+                logger.debug("✓ Successfully created BedrockModel instance")
+            except Exception as e:
+                logger.error(f"Failed to create BedrockModel: {e}")
+                raise RuntimeError(f"BedrockModel creation failed: {e}")
 
             # Get custom tools for the agent
             tools = self._get_custom_tools(user_context)
+            logger.debug(f"✓ Loaded {len(tools)} custom tools")
 
             # Create conversation manager with sliding window
-            conversation_manager = SlidingWindowConversationManager(
-                window_size=self.config.conversation_memory_limit * 2  # Each exchange has 2 messages (user + assistant)
-            )
+            try:
+                conversation_manager = SlidingWindowConversationManager(
+                    window_size=self.config.conversation_memory_limit * 2  # Each exchange has 2 messages (user + assistant)
+                )
+                logger.debug("✓ Successfully created SlidingWindowConversationManager")
+            except Exception as e:
+                logger.error(f"Failed to create conversation manager: {e}")
+                raise RuntimeError(f"Conversation manager creation failed: {e}")
 
             # Create agent instance with correct Strands SDK API
-            agent = Agent(
-                model=bedrock_model,
-                tools=tools,
-                system_prompt=self._get_contextualized_system_prompt(user_context),
-                conversation_manager=conversation_manager
-            )
-
-            logger.info(f"Created Strands agent with {len(tools)} tools")
-
-            return agent
+            try:
+                agent = Agent(
+                    model=bedrock_model,
+                    tools=tools,
+                    system_prompt=self._get_contextualized_system_prompt(user_context),
+                    conversation_manager=conversation_manager
+                )
+                logger.info(f"✓ Successfully created Strands agent with {len(tools)} tools")
+                return agent
+            except Exception as e:
+                logger.error(f"Failed to create Agent instance: {e}")
+                raise RuntimeError(f"Agent creation failed: {e}")
 
         except ImportError as e:
-            logger.error(f"Strands SDK not available: {str(e)}")
-            raise RuntimeError("Strands SDK is not properly installed or configured")
+            # Provide detailed diagnostic information
+            import sys
+            logger.error(f"Strands SDK import failed: {str(e)}")
+            logger.error(f"Python path: {sys.path[:5]}")
+            logger.error(f"Available modules: {[m for m in sys.modules.keys() if 'strands' in m]}")
+            
+            # Check if the layer is mounted
+            layer_paths = ['/opt/python', '/opt/python/lib/python3.10/site-packages']
+            for path in layer_paths:
+                if os.path.exists(path):
+                    logger.error(f"Layer path exists: {path}")
+                    try:
+                        contents = os.listdir(path)[:10]  # First 10 items
+                        logger.error(f"Layer contents: {contents}")
+                    except:
+                        logger.error(f"Cannot list contents of {path}")
+                else:
+                    logger.error(f"Layer path missing: {path}")
+            
+            raise RuntimeError(f"Strands SDK is not properly installed or configured. Import error: {str(e)}")
         except Exception as e:
             logger.exception(f"Error creating Strands agent: {str(e)}")
             raise RuntimeError(f"Failed to initialize Strands agent: {str(e)}")
@@ -238,10 +287,43 @@ class StrandsAgentManager:
             logger.debug(f"Loaded {len(tools)} custom tools for agent")
             
         except ImportError as e:
-            logger.warning(f"Some custom tools not available: {str(e)}")
-            # In development, we can continue without all tools
+            logger.error(f"Tool import failed: {str(e)}")
+            logger.error(f"Available modules: {list(sys.modules.keys())}")
+            
+            # Try to import each tool individually to identify the specific failure
+            tool_import_status = {}
+            
+            try:
+                from tools.product_search_tool import product_search
+                tool_import_status['product_search'] = True
+            except Exception as pe:
+                tool_import_status['product_search'] = f"Failed: {pe}"
+            
+            try:
+                from tools.cart_management_tool import add_to_cart
+                tool_import_status['cart_management'] = True
+            except Exception as ce:
+                tool_import_status['cart_management'] = f"Failed: {ce}"
+            
+            try:
+                from tools.order_query_tool import get_order_history
+                tool_import_status['order_query'] = True
+            except Exception as oe:
+                tool_import_status['order_query'] = f"Failed: {oe}"
+            
+            try:
+                from tools.knowledge_base_tool import search_knowledge_base
+                tool_import_status['knowledge_base'] = True
+            except Exception as ke:
+                tool_import_status['knowledge_base'] = f"Failed: {ke}"
+            
+            logger.error(f"Individual tool import status: {tool_import_status}")
+            
+            # In development, we can continue without all tools, but log the issue
             if self.config.deployment_stage != DeploymentStage.DEVELOPMENT:
                 raise RuntimeError(f"Required tools not available: {str(e)}")
+            else:
+                logger.warning(f"Continuing in development mode without tools due to import errors")
         
         return tools
     
@@ -340,8 +422,23 @@ def test_strands_sdk_import() -> Dict[str, Any]:
         'sdk_available': False,
         'import_errors': [],
         'version_info': {},
-        'basic_functionality': False
+        'basic_functionality': False,
+        'layer_info': {}
     }
+    
+    # Check layer paths
+    layer_paths = ['/opt/python', '/opt/python/lib/python3.10/site-packages']
+    for path in layer_paths:
+        test_results['layer_info'][path] = {
+            'exists': os.path.exists(path),
+            'contents': []
+        }
+        if os.path.exists(path):
+            try:
+                contents = os.listdir(path)[:10]  # First 10 items
+                test_results['layer_info'][path]['contents'] = contents
+            except Exception as e:
+                test_results['layer_info'][path]['error'] = str(e)
     
     try:
         # Test basic imports
