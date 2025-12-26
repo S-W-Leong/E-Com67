@@ -9,6 +9,7 @@ A comprehensive serverless e-commerce platform built on AWS demonstrating modern
 - [AWS Services Used](#aws-services-used)
 - [Prerequisites](#prerequisites)
 - [Setup and Deployment](#setup-and-deployment)
+- [CI/CD Pipeline](#cicd-pipeline)
 - [Frontend Applications](#frontend-applications)
 - [API Reference](#api-reference)
 - [Lambda Functions](#lambda-functions)
@@ -82,6 +83,22 @@ ComputeStack (Lambda, SQS, SNS, Step Functions, Secrets)
 ApiStack (REST API Gateway, WebSocket API Gateway)
 ```
 
+### CI/CD Pipeline (Optional)
+
+```
+PipelineStack (CodePipeline, CodeBuild)
+    |
+    v
+┌─────────────┐    ┌─────────────┐    ┌──────────────┐    ┌─────────────┐
+│   Source    │───►│    Synth    │───►│ UpdatePipeline│───►│   Deploy    │
+│ (CodeCommit)│    │ (cdk synth) │    │ (Self-Mutate)│    │   Stages    │
+└─────────────┘    └─────────────┘    └──────────────┘    └─────────────┘
+                                                                  |
+                                              ┌───────────────────┼───────────────────┐
+                                              v                   v                   v
+                                         DataStack          ComputeStack          ApiStack
+```
+
 ---
 
 ## Project Structure
@@ -96,7 +113,8 @@ e-com67/
 ├── stacks/                     # AWS CDK stack definitions
 │   ├── data_stack.py          # DynamoDB, Cognito, OpenSearch, S3
 │   ├── compute_stack.py       # Lambda, SQS, SNS, Step Functions
-│   └── api_stack.py           # API Gateway (REST + WebSocket)
+│   ├── api_stack.py           # API Gateway (REST + WebSocket)
+│   └── pipeline_stack.py      # CI/CD Pipeline (CodePipeline)
 │
 ├── lambda/                     # Lambda function implementations
 │   ├── product_crud/          # Product CRUD operations
@@ -140,7 +158,9 @@ e-com67/
 │   ├── knowledge-base-guide.md
 │   └── notification-system-integration.md
 │
-└── tests/                      # Test files
+├── tests/                      # Test files
+│
+└── buildspec.yml               # CodeBuild specification (for reference)
 ```
 
 ---
@@ -163,6 +183,9 @@ e-com67/
 | **Secrets Manager** | API key storage | Stripe API key |
 | **CloudWatch** | Logging and monitoring | Structured logs, custom metrics |
 | **X-Ray** | Distributed tracing | Enabled on all Lambda functions |
+| **CodePipeline** | CI/CD pipeline orchestration | Self-mutating, EventBridge triggered |
+| **CodeBuild** | Build and synthesis | Lambda layers, CDK synth |
+| **CodeCommit** | Source code repository | Git-based version control |
 
 ---
 
@@ -270,6 +293,129 @@ aws cloudformation describe-stacks \
   --query "Stacks[0].Outputs[?OutputKey=='WebSocketApiUrl'].OutputValue" \
   --output text
 ```
+
+---
+
+## CI/CD Pipeline
+
+E-Com67 includes an optional CI/CD pipeline using AWS CodePipeline for automated deployments.
+
+### Pipeline Architecture
+
+```
+┌─────────────┐    ┌─────────────┐    ┌──────────────┐    ┌─────────────────────────────────┐
+│   Source    │───►│    Synth    │───►│ UpdatePipeline│───►│           Deploy                │
+│ (CodeCommit)│    │  (Build +   │    │ (Self-Mutate)│    │  Data → Compute → Api           │
+│   master    │    │ CDK Synth)  │    │              │    │                                 │
+└─────────────┘    └─────────────┘    └──────────────┘    └─────────────────────────────────┘
+```
+
+### Key Features
+
+| Feature | Description |
+|---------|-------------|
+| **EventBridge Trigger** | Automatically triggers on push to `master` branch |
+| **Lambda Layer Builds** | Builds all Lambda layers during synthesis (including ARM64 Docker builds) |
+| **Sequential Deployment** | Respects stack dependencies (Data → Compute → Api) |
+| **Manual Pipeline Updates** | Pipeline changes require explicit deployment for stability |
+
+### Deployment Modes
+
+E-Com67 supports two deployment modes:
+
+| Mode | Command | Use Case |
+|------|---------|----------|
+| **Direct** | `cdk deploy --all` | Development, testing, manual deployments |
+| **Pipeline** | `USE_PIPELINE=true cdk deploy E-Com67-PipelineStack` | Production, automated CI/CD |
+
+### Setting Up the Pipeline
+
+#### 1. Create CodeCommit Repository
+
+```bash
+# Create the repository
+aws codecommit create-repository --repository-name e-com67 --region ap-southeast-1
+
+# Add CodeCommit as a remote
+git remote add codecommit https://git-codecommit.ap-southeast-1.amazonaws.com/v1/repos/e-com67
+
+# Push code to CodeCommit
+git push codecommit master
+```
+
+#### 2. Deploy the Pipeline Stack
+
+```bash
+# Deploy the pipeline (one-time setup)
+USE_PIPELINE=true cdk deploy E-Com67-PipelineStack
+```
+
+#### 3. Trigger the Pipeline
+
+The pipeline will automatically trigger on subsequent pushes to `master`:
+
+```bash
+git add .
+git commit -m "Your changes"
+git push codecommit master
+```
+
+Or manually trigger:
+
+```bash
+aws codepipeline start-pipeline-execution --name e-com67-pipeline
+```
+
+### Pipeline Stages
+
+| Stage | Description |
+|-------|-------------|
+| **Source** | Pulls latest code from CodeCommit `master` branch |
+| **Synth** | Installs dependencies, builds Lambda layers (with Docker for ARM64), runs `cdk synth` |
+| **Deploy** | Deploys DataStack → ComputeStack → ApiStack sequentially |
+
+### Updating the Pipeline
+
+Self-mutation is disabled for stability. When you modify `pipeline_stack.py`, manually redeploy:
+
+```bash
+USE_PIPELINE=true cdk deploy E-Com67-PipelineStack
+```
+
+This approach ensures pipeline failures don't block application deployments.
+
+### Monitoring Pipeline Execution
+
+```bash
+# View pipeline status
+aws codepipeline get-pipeline-state --name e-com67-pipeline
+
+# View execution history
+aws codepipeline list-pipeline-executions --pipeline-name e-com67-pipeline
+
+# Get pipeline outputs
+aws cloudformation describe-stacks \
+  --stack-name E-Com67-PipelineStack \
+  --query "Stacks[0].Outputs" \
+  --output table
+```
+
+### Troubleshooting Pipeline
+
+**Pipeline Not Triggering:**
+1. Verify EventBridge rule exists for the repository
+2. Check that you're pushing to the `master` branch
+3. Ensure CodeCommit repository name matches (`e-com67`)
+
+**Build Failures:**
+1. Check CodeBuild logs in CloudWatch
+2. Verify Lambda layer dependencies are compatible
+3. Ensure CDK synth runs successfully locally first
+
+**Deployment Failures:**
+1. Review CloudFormation events for the failing stack
+2. Check IAM permissions for the pipeline role
+3. Verify resource limits haven't been exceeded
 
 ---
 

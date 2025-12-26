@@ -113,14 +113,17 @@ class PipelineStack(Stack):
             trigger=cpactions.CodeCommitTrigger.EVENTS
         )
 
-        # Create the CDK Pipeline with self-mutation enabled
+        # Create the CDK Pipeline with self-mutation disabled
+        # Pipeline changes require manual deployment:
+        #   USE_PIPELINE=true cdk deploy E-Com67-PipelineStack
         pipeline = pipelines.CodePipeline(
             self,
             "E-Com67-Pipeline",
             pipeline_name="e-com67-pipeline",
 
-            # Enable self-mutation so pipeline updates itself
-            self_mutation=True,
+            # Disable self-mutation - pipeline updates are done manually
+            # This prevents pipeline failures from blocking application deployments
+            self_mutation=False,
 
             # Cross-account not needed for single account deployment
             cross_account_keys=False,
@@ -150,11 +153,9 @@ class PipelineStack(Stack):
                     # OpenSearch layer
                     "pip install -r layers/opensearch/requirements.txt -t layers/opensearch/python/ --upgrade",
 
-                    # Strands layer (standard pip install - most packages are architecture-agnostic)
-                    "echo 'Building Strands layer...'",
-                    "pip install -r layers/strands/requirements-minimal.txt -t layers/strands/python/ --upgrade",
-                    "find layers/strands/python -name '*.pyc' -delete",
-                    "find layers/strands/python -name '__pycache__' -type d -exec rm -rf {} + || true",
+                    # Strands layer (use Docker to build for ARM64 architecture)
+                    "echo 'Building Strands layer for ARM64 using Docker...'",
+                    "docker run --rm -v $(pwd)/layers/strands:/workspace -w /workspace --platform linux/arm64 python:3.10-slim bash -c 'pip install -r requirements-minimal.txt -t python/ --no-cache-dir && find python -name \"*.pyc\" -delete && find python -name \"__pycache__\" -type d -exec rm -rf {} + || true'",
 
                     # Synthesize CDK
                     "echo 'Synthesizing CDK...'",
@@ -167,10 +168,12 @@ class PipelineStack(Stack):
             # Use a specific CodeBuild environment for layer builds
             code_build_defaults=pipelines.CodeBuildOptions(
                 build_environment=codebuild.BuildEnvironment(
-                    # Use standard image with Python support and ARM64 architecture
+                    # Use standard image with Python support and Docker
                     build_image=codebuild.LinuxBuildImage.STANDARD_7_0,
-                    # Use ARM64 compute type to match Lambda architecture
+                    # Use medium compute for Docker builds
                     compute_type=codebuild.ComputeType.MEDIUM,
+                    # Enable privileged mode for Docker
+                    privileged=True,
                 ),
                 # Grant permissions needed for deployment
                 role_policy=[
