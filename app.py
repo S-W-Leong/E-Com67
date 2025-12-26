@@ -46,6 +46,7 @@ if use_pipeline:
         env=env,
         description="E-Com67 Platform - CI/CD Pipeline with CodePipeline"
     )
+    # Note: Individual stacks are created within the pipeline's Deploy stage
 else:
     # Direct deployment mode: Deploy stacks individually
     # This is the original behavior for development and testing

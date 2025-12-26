@@ -132,6 +132,10 @@ class PipelineStack(Stack):
             synth=pipelines.ShellStep(
                 "Synth",
                 input=source,
+                # Set environment variable to synthesize pipeline stack
+                env={
+                    "USE_PIPELINE": "true",
+                },
                 # Install dependencies and synthesize CDK
                 install_commands=[
                     # Install Python dependencies for CDK
