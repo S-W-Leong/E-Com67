@@ -274,6 +274,19 @@ class ComputeStack(Stack):
                 ]
             )
         )
+
+        # Add Cognito permissions for user email lookup (used by order processor)
+        self.lambda_execution_role.add_to_policy(
+            iam.PolicyStatement(
+                effect=iam.Effect.ALLOW,
+                actions=[
+                    "cognito-idp:AdminGetUser"
+                ],
+                resources=[
+                    Fn.import_value("E-Com67-UserPoolArn")
+                ]
+            )
+        )
         
         # Add Bedrock permissions for AI chat and knowledge processing
         # APAC inference profiles route to multiple regions, so we need broad permissions
@@ -426,6 +439,7 @@ class ComputeStack(Stack):
                 "CART_TABLE_NAME": Fn.import_value("E-Com67-CartTableName"),
                 "ORDER_NOTIFICATIONS_TOPIC_ARN": self.order_notifications_topic.topic_arn,
                 "ADMIN_NOTIFICATIONS_TOPIC_ARN": self.admin_notifications_topic.topic_arn,
+                "USER_POOL_ID": Fn.import_value("E-Com67-UserPoolId"),
                 "POWERTOOLS_SERVICE_NAME": "order-processor",
                 "POWERTOOLS_METRICS_NAMESPACE": "E-Com67",
                 "LOG_LEVEL": "INFO"

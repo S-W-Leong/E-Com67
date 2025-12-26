@@ -33,6 +33,7 @@ metrics = Metrics(namespace="E-Com67")
 dynamodb = boto3.resource('dynamodb')
 sns = boto3.client('sns')
 sqs = boto3.client('sqs')
+cognito = boto3.client('cognito-idp')
 
 def get_orders_table():
     """Get orders table with lazy initialization"""
@@ -45,6 +46,51 @@ def get_products_table():
 def get_cart_table():
     """Get cart table with lazy initialization"""
     return dynamodb.Table(os.environ['CART_TABLE_NAME'])
+
+
+@tracer.capture_method
+def get_user_email_from_cognito(user_id: str) -> Optional[str]:
+    """
+    Retrieve user's email address from Cognito User Pool.
+
+    Args:
+        user_id: The Cognito user ID (sub)
+
+    Returns:
+        User's email address or None if not found
+    """
+    user_pool_id = os.environ.get('USER_POOL_ID')
+
+    if not user_pool_id:
+        logger.warning("USER_POOL_ID not configured, cannot lookup user email")
+        return None
+
+    try:
+        # Use admin_get_user to retrieve user attributes
+        response = cognito.admin_get_user(
+            UserPoolId=user_pool_id,
+            Username=user_id
+        )
+
+        # Extract email from user attributes
+        for attr in response.get('UserAttributes', []):
+            if attr['Name'] == 'email':
+                logger.info("Retrieved email from Cognito", extra={"user_id": user_id})
+                return attr['Value']
+
+        logger.warning("Email attribute not found for user", extra={"user_id": user_id})
+        return None
+
+    except ClientError as e:
+        error_code = e.response['Error']['Code']
+        if error_code == 'UserNotFoundException':
+            logger.warning("User not found in Cognito", extra={"user_id": user_id})
+        else:
+            logger.error("Failed to get user from Cognito", extra={
+                "user_id": user_id,
+                "error": str(e)
+            })
+        return None
 
 
 class OrderProcessorService:
@@ -95,8 +141,8 @@ class OrderProcessorService:
             # Clear user's cart
             cart_cleared = OrderProcessorService._clear_user_cart(user_id)
             
-            # Send notifications
-            notification_sent = OrderProcessorService._send_order_notifications(order_record)
+            # Send notifications (pass order_data to get recipientEmail and customer info)
+            notification_sent = OrderProcessorService._send_order_notifications(order_record, order_data)
             
             # Update order status to completed
             OrderProcessorService._update_order_status(order_id, 'completed')
@@ -319,32 +365,68 @@ class OrderProcessorService:
     
     @staticmethod
     @tracer.capture_method
-    def _send_order_notifications(order_record: Dict[str, Any]) -> bool:
-        """Send order confirmation notifications"""
+    def _send_order_notifications(order_record: Dict[str, Any], order_data: Dict[str, Any]) -> bool:
+        """Send order confirmation notifications.
+
+        Args:
+            order_record: The created order record with order details
+            order_data: Original order data from checkout flow (may contain phone, shippingAddress, etc.)
+
+        Returns:
+            True if notification was sent successfully
+        """
         logger.info("Sending order notifications", extra={"order_id": order_record['orderId']})
-        
+
         try:
             # Get SNS topic ARN from environment
             topic_arn = os.environ.get('ORDER_NOTIFICATIONS_TOPIC_ARN')
-            
+
             if not topic_arn:
                 logger.warning("Order notifications topic ARN not configured")
                 return False
-            
-            # Prepare notification message
+
+            # Get user email from Cognito using the userId
+            user_id = order_record['userId']
+            recipient_email = get_user_email_from_cognito(user_id)
+
+            if not recipient_email:
+                logger.warning("Could not retrieve email for user from Cognito", extra={
+                    "order_id": order_record['orderId'],
+                    "user_id": user_id
+                })
+
+            # Extract customer name from order_data or shipping address
+            shipping_address = order_data.get('shippingAddress', {})
+            customer_name = (
+                order_data.get('customerName') or
+                shipping_address.get('name') or
+                shipping_address.get('fullName') or
+                'Valued Customer'
+            )
+
+            # Prepare notification message with full data for email/SMS generation
             notification_message = {
-                'type': 'order_confirmation',
-                'orderId': order_record['orderId'],
-                'userId': order_record['userId'],
-                'totalAmount': order_record['totalAmount'],
-                'itemCount': len(order_record['items']),
-                'timestamp': order_record['timestamp']
+                'notificationType': 'order_confirmation',
+                'userId': user_id,
+                'recipientEmail': recipient_email,
+                'recipientPhone': order_data.get('recipientPhone') or order_data.get('phone'),
+                'orderData': {
+                    'orderId': order_record['orderId'],
+                    'customerName': customer_name,
+                    'items': order_record.get('items', []),
+                    'subtotal': order_record.get('subtotal', 0),
+                    'taxAmount': order_record.get('taxAmount', 0),
+                    'totalAmount': order_record['totalAmount'],
+                    'status': order_record.get('status', 'processing'),
+                    'timestamp': order_record['timestamp'],
+                    'shippingAddress': shipping_address
+                }
             }
-            
+
             # Send to SNS topic
             sns.publish(
                 TopicArn=topic_arn,
-                Message=json.dumps(notification_message),
+                Message=json.dumps(notification_message, default=str),  # default=str handles Decimal
                 Subject=f"Order Confirmation - {order_record['orderId']}",
                 MessageAttributes={
                     'notificationType': {
@@ -357,12 +439,15 @@ class OrderProcessorService:
                     }
                 }
             )
-            
-            logger.info("Order notification sent", extra={"order_id": order_record['orderId']})
+
+            logger.info("Order notification sent", extra={
+                "order_id": order_record['orderId'],
+                "has_email": bool(recipient_email)
+            })
             metrics.add_metric(name="OrderNotificationSent", unit=MetricUnit.Count, value=1)
-            
+
             return True
-            
+
         except Exception as e:
             logger.error("Failed to send order notification", extra={
                 "order_id": order_record['orderId'],

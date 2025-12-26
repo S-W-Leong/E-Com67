@@ -199,21 +199,28 @@ def send_sms_notification(notification_data: Dict[str, Any]) -> Dict[str, Any]:
 def generate_sms_message(notification_data: Dict[str, Any]) -> str:
     """
     Generate SMS message content based on notification type.
-    
+
+    Handles two data formats:
+    1. Direct invocation with nested orderData
+    2. SNS message from order_processor with flat structure
+
     Args:
         notification_data: Notification payload
-        
+
     Returns:
         SMS message text
     """
-    notification_type = notification_data.get('notificationType')
+    notification_type = notification_data.get('notificationType') or notification_data.get('type')
+
+    # Handle both nested orderData format and flat SNS message format
     order_data = notification_data.get('orderData', {})
-    order_id = order_data.get('orderId', 'N/A')
-    
+    # For flat SNS format, orderId/totalAmount are at top level
+    order_id = order_data.get('orderId') or notification_data.get('orderId', 'N/A')
+    total_amount = order_data.get('totalAmount') or notification_data.get('totalAmount', 0)
+
     if notification_type == 'order_confirmation':
-        total_amount = order_data.get('totalAmount', 0)
         return f"E-Com67: Order {order_id} confirmed! Total: ${total_amount:.2f}. Thank you for your purchase!"
-        
+
     elif notification_type == 'order_status_update':
         status = order_data.get('status', 'PROCESSING')
         if status == 'SHIPPED':
@@ -226,7 +233,7 @@ def generate_sms_message(notification_data: Dict[str, Any]) -> str:
             return f"E-Com67: Order {order_id} delivered! We hope you enjoy your purchase."
         else:
             return f"E-Com67: Order {order_id} status updated to {status}."
-    
+
     else:
         return f"E-Com67: You have a new notification regarding order {order_id}."
 
@@ -368,14 +375,60 @@ def process_notification_with_retry(
     return results
 
 
+@tracer.capture_method
+def extract_notification_from_event(event: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Extract notification data from various event sources.
+
+    Handles:
+    - Direct invocation: event contains notification data directly
+    - SNS trigger: event contains Records with SNS envelope
+
+    Args:
+        event: Raw Lambda event
+
+    Returns:
+        Extracted notification data
+    """
+    # Check if this is an SNS event (has Records array with Sns data)
+    if 'Records' in event and len(event['Records']) > 0:
+        record = event['Records'][0]
+
+        # SNS event format
+        if 'Sns' in record:
+            sns_message = record['Sns'].get('Message', '{}')
+            try:
+                notification_data = json.loads(sns_message)
+                logger.info("Extracted notification from SNS event", extra={
+                    "message_id": record['Sns'].get('MessageId'),
+                    "subject": record['Sns'].get('Subject')
+                })
+                return notification_data
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse SNS message: {str(e)}")
+                raise ValueError(f"Invalid JSON in SNS message: {str(e)}")
+
+        # EventBridge or other event source with Records
+        elif 'body' in record:
+            try:
+                return json.loads(record['body'])
+            except json.JSONDecodeError:
+                return record
+
+    # Direct invocation - event is the notification data
+    return event
+
+
 @logger.inject_lambda_context
 @tracer.capture_lambda_handler
 @metrics.log_metrics(capture_cold_start_metric=True)
 def handler(event: Dict[str, Any], context: LambdaContext) -> Dict[str, Any]:
     """
     Lambda handler for notification orchestration.
-    
-    Event format:
+
+    Supports multiple invocation sources:
+
+    1. Direct invocation format:
     {
         "userId": "user-uuid",
         "notificationType": "order_confirmation" | "order_status_update" | "promotional" | "system_maintenance",
@@ -390,29 +443,49 @@ def handler(event: Dict[str, Any], context: LambdaContext) -> Dict[str, Any]:
             ...
         }
     }
-    
+
+    2. SNS trigger format (from order_processor):
+    {
+        "Records": [{
+            "Sns": {
+                "Message": "{\"type\":\"order_confirmation\",\"orderId\":\"...\",\"userId\":\"...\",...}"
+            }
+        }]
+    }
+
     Args:
         event: Lambda event containing notification details
         context: Lambda context
-        
+
     Returns:
         Response with notification processing results
     """
     try:
         logger.info("Processing notification orchestration request", extra={"event": event})
-        
+
+        # Extract notification data from event (handles SNS envelope)
+        notification_data = extract_notification_from_event(event)
+        logger.info("Extracted notification data", extra={"notification_data": notification_data})
+
         # Extract notification details
-        user_id = event.get('userId')
-        notification_type = event.get('notificationType')
-        
+        # Support both 'userId' and SNS message format with 'type' field
+        user_id = notification_data.get('userId')
+        notification_type = notification_data.get('notificationType') or notification_data.get('type')
+
         # Validate required fields
         if not user_id:
             raise ValueError("userId is required")
         if not notification_type:
             raise ValueError("notificationType is required")
         
+        # Normalize notification data to ensure consistent field names
+        # SNS messages from order_processor use 'type' instead of 'notificationType'
+        normalized_data = notification_data.copy()
+        if 'notificationType' not in normalized_data and 'type' in normalized_data:
+            normalized_data['notificationType'] = normalized_data['type']
+
         # Process notification with retry logic
-        results = process_notification_with_retry(event)
+        results = process_notification_with_retry(normalized_data)
         
         # Record analytics
         channels_used = [r['channel'] for r in results]

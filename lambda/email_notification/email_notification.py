@@ -46,9 +46,10 @@ def generate_order_confirmation_email(order_data: Dict[str, Any]) -> str:
     order_id = order_data.get('orderId', 'N/A')
     customer_name = order_data.get('customerName', 'Valued Customer')
     items = order_data.get('items', [])
-    total_amount = order_data.get('totalAmount', 0)
-    order_date = order_data.get('timestamp', datetime.now().timestamp())
-    
+    # Convert to numeric types to handle DynamoDB string serialization
+    total_amount = float(order_data.get('totalAmount', 0))
+    order_date = float(order_data.get('timestamp', datetime.now().timestamp()))
+
     # Format order date
     order_date_str = datetime.fromtimestamp(order_date).strftime('%B %d, %Y at %I:%M %p')
     
@@ -56,10 +57,11 @@ def generate_order_confirmation_email(order_data: Dict[str, Any]) -> str:
     items_html = ""
     for item in items:
         item_name = item.get('name', 'Unknown Product')
-        item_quantity = item.get('quantity', 1)
-        item_price = item.get('price', 0)
+        # Convert to numeric types to handle DynamoDB string serialization
+        item_quantity = int(item.get('quantity', 1))
+        item_price = float(item.get('price', 0))
         item_total = item_quantity * item_price
-        
+
         items_html += f"""
         <tr>
             <td style="padding: 10px; border-bottom: 1px solid #eee;">{item_name}</td>
