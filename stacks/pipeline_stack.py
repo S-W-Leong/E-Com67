@@ -150,9 +150,9 @@ class PipelineStack(Stack):
                     # OpenSearch layer
                     "pip install -r layers/opensearch/requirements.txt -t layers/opensearch/python/ --upgrade",
 
-                    # Strands layer (using platform-specific pip install for Linux ARM64)
-                    "echo 'Building Strands layer with Linux ARM64 binaries...'",
-                    "pip install -r layers/strands/requirements-minimal.txt -t layers/strands/python/ --upgrade --platform linux_aarch64 --only-binary=:all: --no-cache-dir",
+                    # Strands layer (standard pip install - most packages are architecture-agnostic)
+                    "echo 'Building Strands layer...'",
+                    "pip install -r layers/strands/requirements-minimal.txt -t layers/strands/python/ --upgrade",
                     "find layers/strands/python -name '*.pyc' -delete",
                     "find layers/strands/python -name '__pycache__' -type d -exec rm -rf {} + || true",
 
