@@ -10,6 +10,14 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
-    sourcemap: true
+    sourcemap: true,
+    rollupOptions: {
+      // Ensure shared package dependencies are resolved from the main app
+      external: [],
+    }
+  },
+  optimizeDeps: {
+    // Include shared package dependencies for pre-bundling
+    include: ['axios', 'lucide-react', 'clsx']
   }
 })
