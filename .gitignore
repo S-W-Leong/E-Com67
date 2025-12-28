@@ -1,7 +1,6 @@
 
 
 *.swp
-package-lock.json
 __pycache__
 .pytest_cache
 .venv
@@ -45,3 +44,6 @@ dist-ssr
 # Lambda layer dependencies
 layers/*/python/
 layers/*/nodejs/
+
+# Keep package-lock.json for frontend applications
+!frontends/*/package-lock.json

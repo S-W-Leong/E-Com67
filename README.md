@@ -21,7 +21,7 @@ A comprehensive serverless e-commerce platform built on AWS demonstrating modern
 - [AI Chat Feature](#ai-chat-feature)
 - [Search Functionality](#search-functionality)
 - [Notification System](#notification-system)
-- [Testing](#testing)
+- [Testing](#system-testing)
 - [Monitoring and Observability](#monitoring-and-observability)
 - [Cost Optimization](#cost-optimization)
 - [Troubleshooting](#troubleshooting)
@@ -300,39 +300,72 @@ aws cloudformation describe-stacks \
 
 ## CI/CD Pipeline
 
-E-Com67 includes an optional CI/CD pipeline using AWS CodePipeline for automated deployments.
+E-Com67 uses a **three-pipeline architecture** for automated deployments:
+
+1. **Backend Pipeline** - Deploys infrastructure (Data, Compute, API stacks)
+2. **Admin Dashboard Pipeline** - Builds and deploys admin React app
+3. **Customer App Pipeline** - Builds and deploys customer React app
 
 ### Pipeline Architecture
 
 ```
-┌─────────────┐    ┌─────────────┐    ┌──────────────┐    ┌─────────────────────────────────┐
-│   Source    │───►│    Synth    │───►│ UpdatePipeline│───►│           Deploy                │
-│ (CodeCommit)│    │  (Build +   │    │ (Self-Mutate)│    │  Data → Compute → Api           │
-│   master    │    │ CDK Synth)  │    │              │    │                                 │
-└─────────────┘    └─────────────┘    └──────────────┘    └─────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         CodeCommit Repository                            │
+│                            (master branch)                               │
+└────────────┬────────────────────────┬────────────────────────┬──────────┘
+             │                        │                        │
+             ▼                        ▼                        ▼
+┌────────────────────────┐ ┌────────────────────┐ ┌────────────────────┐
+│  Backend Pipeline      │ │  Admin Pipeline    │ │  Customer Pipeline │
+│  ─────────────────     │ │  ──────────────    │ │  ─────────────     │
+│  Source → Synth →      │ │  Source → Build →  │ │  Source → Build →  │
+│  Deploy (Data →        │ │  Deploy (S3) →     │ │  Deploy (S3) →     │
+│  Compute → Api)        │ │  Invalidate CF     │ │  Invalidate CF     │
+└────────────────────────┘ └────────────────────┘ └────────────────────┘
 ```
 
 ### Key Features
 
-| Feature | Description |
-|---------|-------------|
-| **EventBridge Trigger** | Automatically triggers on push to `master` branch |
-| **Lambda Layer Builds** | Builds all Lambda layers during synthesis (including ARM64 Docker builds) |
-| **Sequential Deployment** | Respects stack dependencies (Data → Compute → Api) |
-| **Manual Pipeline Updates** | Pipeline changes require explicit deployment for stability |
+| Feature | Backend Pipeline | Frontend Pipelines |
+|---------|-----------------|-------------------|
+| **Trigger** | EventBridge on push to master | EventBridge on push to master |
+| **Build** | CDK synth + Lambda layers | npm build (React) |
+| **Deploy** | CloudFormation stacks | S3 + CloudFront invalidation |
+| **Self-Mutation** | Disabled (manual updates) | N/A |
+| **Dependencies** | Data → Compute → Api | Requires FrontendStack |
 
 ### Deployment Modes
 
-E-Com67 supports two deployment modes:
+E-Com67 supports multiple deployment modes:
 
 | Mode | Command | Use Case |
 |------|---------|----------|
 | **Direct** | `cdk deploy --all` | Development, testing, manual deployments |
-| **Pipeline** | `USE_PIPELINE=true cdk deploy E-Com67-PipelineStack` | Production, automated CI/CD |
+| **Backend Pipeline** | `USE_BACKEND_PIPELINE=true cdk deploy E-Com67-BackendPipelineStack` | Automated backend infrastructure |
+| **Frontend Pipelines** | `USE_FRONTEND_PIPELINES=true cdk deploy E-Com67-AdminPipelineStack E-Com67-CustomerPipelineStack` | Automated frontend deployments |
 
-### Setting Up the Pipeline
+### Quick Setup with Helper Script
 
-#### 1. Create CodeCommit Repository
+Use the provided deployment script for guided setup:
+
+```bash
+# Run the interactive deployment script
+./deploy_pipelines.sh
+```
+
+The script provides options to:
+1. Deploy backend CI/CD pipeline
+2. Deploy frontend stack (S3 + CloudFront)
+3. Deploy frontend CI/CD pipelines
+4. Destroy old pipeline stack
+5. Show pipeline status
+6. Deploy all pipelines at once
+
+### Manual Setup
+
+#### Prerequisites
+
+1. **Create CodeCommit Repository** (if not exists):
 
 ```bash
 # Create the repository
@@ -345,16 +378,45 @@ git remote add codecommit https://git-codecommit.ap-southeast-1.amazonaws.com/v1
 git push codecommit master
 ```
 
-#### 2. Deploy the Pipeline Stack
+#### Step 1: Deploy Backend Pipeline
 
 ```bash
-# Deploy the pipeline (one-time setup)
-USE_PIPELINE=true cdk deploy E-Com67-PipelineStack
+# Deploy the backend infrastructure pipeline
+USE_BACKEND_PIPELINE=true cdk deploy E-Com67-BackendPipelineStack --require-approval never
 ```
 
-#### 3. Trigger the Pipeline
+This creates the pipeline that will automatically deploy:
+- DataStack (DynamoDB, Cognito, OpenSearch, S3)
+- ComputeStack (Lambda functions and layers)
+- ApiStack (API Gateway)
 
-The pipeline will automatically trigger on subsequent pushes to `master`:
+#### Step 2: Deploy Frontend Stack
+
+```bash
+# Deploy S3 buckets and CloudFront distributions
+cdk deploy E-Com67-FrontendStack --require-approval never
+```
+
+This creates:
+- S3 bucket for admin dashboard
+- S3 bucket for customer app
+- CloudFront distributions for both apps
+
+#### Step 3: Deploy Frontend Pipelines
+
+```bash
+# Deploy both frontend pipelines
+USE_FRONTEND_PIPELINES=true cdk deploy E-Com67-AdminPipelineStack E-Com67-CustomerPipelineStack --require-approval never
+```
+
+This creates pipelines that will automatically:
+- Build React applications with npm
+- Deploy to S3
+- Invalidate CloudFront cache
+
+### Triggering Pipelines
+
+All pipelines automatically trigger on push to `master`:
 
 ```bash
 git add .
@@ -362,62 +424,143 @@ git commit -m "Your changes"
 git push codecommit master
 ```
 
-Or manually trigger:
+Or manually trigger specific pipelines:
 
 ```bash
-aws codepipeline start-pipeline-execution --name e-com67-pipeline
+# Backend pipeline
+aws codepipeline start-pipeline-execution --name e-com67-backend-pipeline
+
+# Admin dashboard pipeline
+aws codepipeline start-pipeline-execution --name e-com67-admin-dashboard-pipeline
+
+# Customer app pipeline
+aws codepipeline start-pipeline-execution --name e-com67-customer-app-pipeline
 ```
 
-### Pipeline Stages
+### Pipeline Details
+
+#### Backend Pipeline Stages
 
 | Stage | Description |
 |-------|-------------|
 | **Source** | Pulls latest code from CodeCommit `master` branch |
-| **Synth** | Installs dependencies, builds Lambda layers (with Docker for ARM64), runs `cdk synth` |
+| **Synth** | Installs dependencies, builds Lambda layers, runs `cdk synth` |
 | **Deploy** | Deploys DataStack → ComputeStack → ApiStack sequentially |
 
-### Updating the Pipeline
+#### Frontend Pipeline Stages
 
-Self-mutation is disabled for stability. When you modify `pipeline_stack.py`, manually redeploy:
+| Stage | Description |
+|-------|-------------|
+| **Source** | Pulls latest code from CodeCommit `master` branch |
+| **Build** | Runs `npm ci` and `npm run build` in frontend directory |
+| **Deploy** | Uploads build artifacts to S3 and invalidates CloudFront cache |
+
+### Updating Pipelines
+
+**Backend Pipeline:**
+Self-mutation is disabled for stability. To update the pipeline itself:
 
 ```bash
-USE_PIPELINE=true cdk deploy E-Com67-PipelineStack
+USE_BACKEND_PIPELINE=true cdk deploy E-Com67-BackendPipelineStack
 ```
 
-This approach ensures pipeline failures don't block application deployments.
+**Frontend Pipelines:**
+Frontend pipelines are standard CodePipeline resources. Update them with:
+
+```bash
+USE_FRONTEND_PIPELINES=true cdk deploy E-Com67-AdminPipelineStack E-Com67-CustomerPipelineStack
+```
 
 ### Monitoring Pipeline Execution
 
 ```bash
-# View pipeline status
-aws codepipeline get-pipeline-state --name e-com67-pipeline
+# View backend pipeline status
+aws codepipeline get-pipeline-state --name e-com67-backend-pipeline
+
+# View admin dashboard pipeline status
+aws codepipeline get-pipeline-state --name e-com67-admin-dashboard-pipeline
+
+# View customer app pipeline status
+aws codepipeline get-pipeline-state --name e-com67-customer-app-pipeline
 
 # View execution history
-aws codepipeline list-pipeline-executions --pipeline-name e-com67-pipeline
+aws codepipeline list-pipeline-executions --pipeline-name e-com67-backend-pipeline
 
 # Get pipeline outputs
 aws cloudformation describe-stacks \
-  --stack-name E-Com67-PipelineStack \
+  --stack-name E-Com67-BackendPipelineStack \
   --query "Stacks[0].Outputs" \
   --output table
 ```
 
-### Troubleshooting Pipeline
+### Accessing Deployed Frontends
 
-**Pipeline Not Triggering:**
-1. Verify EventBridge rule exists for the repository
-2. Check that you're pushing to the `master` branch
-3. Ensure CodeCommit repository name matches (`e-com67`)
+After frontend pipelines complete:
 
-**Build Failures:**
-1. Check CodeBuild logs in CloudWatch
-2. Verify Lambda layer dependencies are compatible
-3. Ensure CDK synth runs successfully locally first
+```bash
+# Get admin dashboard URL
+aws cloudformation describe-stacks \
+  --stack-name E-Com67-FrontendStack \
+  --query "Stacks[0].Outputs[?OutputKey=='AdminUrl'].OutputValue" \
+  --output text
 
-**Deployment Failures:**
-1. Review CloudFormation events for the failing stack
-2. Check IAM permissions for the pipeline role
-3. Verify resource limits haven't been exceeded
+# Get customer app URL
+aws cloudformation describe-stacks \
+  --stack-name E-Com67-FrontendStack \
+  --query "Stacks[0].Outputs[?OutputKey=='CustomerUrl'].OutputValue" \
+  --output text
+```
+
+### Troubleshooting Pipelines
+
+**Backend Pipeline Issues:**
+
+1. **Pipeline Not Triggering:**
+   - Verify EventBridge rule exists for the repository
+   - Check that you're pushing to the `master` branch
+   - Ensure CodeCommit repository name matches (`e-com67`)
+
+2. **Build Failures:**
+   - Check CodeBuild logs in CloudWatch
+   - Verify Lambda layer dependencies are compatible
+   - Ensure CDK synth runs successfully locally first
+
+3. **Deployment Failures:**
+   - Review CloudFormation events for the failing stack
+   - Check IAM permissions for the pipeline role
+   - Verify resource limits haven't been exceeded
+
+**Frontend Pipeline Issues:**
+
+1. **Build Failures:**
+   - Check CodeBuild logs for npm errors
+   - Verify package.json and dependencies are correct
+   - Ensure build script exists in package.json
+
+2. **Deployment Failures:**
+   - Verify S3 bucket permissions
+   - Check CloudFront distribution status
+   - Ensure build output directory matches buildspec
+
+3. **Cache Invalidation Failures:**
+   - Verify CloudFront invalidation permissions
+   - Check distribution ID is correct
+   - Review CloudWatch logs for invalidation project
+
+### Cost Considerations
+
+**Pipeline Costs:**
+- CodePipeline: $1/month per active pipeline
+- CodeBuild: $0.005/minute (build time)
+- S3: Storage for artifacts (~$0.023/GB)
+- CloudFront: Data transfer and requests
+
+**Estimated Monthly Costs:**
+- 3 pipelines: ~$3/month
+- Build time (10 builds/month, 5 min each): ~$0.25/month
+- Artifacts storage: <$1/month
+
+**Total:** ~$5-10/month for CI/CD infrastructure
 
 ---
 
@@ -1121,7 +1264,7 @@ See [docs/notification-system-integration.md](docs/notification-system-integrati
 
 ---
 
-## Testing
+## System Testing
 
 ### Backend Tests
 
@@ -1164,6 +1307,12 @@ npm test
 # Run with coverage
 npm run test:coverage
 ```
+
+### Distributed Load Testing on AWS
+
+DLT console: https://d359mw8nc2z8h2.cloudfront.net/ 
+
+DLT MCP Server Endpoint: https://dlt-mcp-server-hf3pwfbt6m.gateway.bedrock-agentcore.ap-southeast-1.amazonaws.com/mcp
 
 ---
 

@@ -1,20 +1,19 @@
 """
-E-Com67 Platform Pipeline Stack
+E-Com67 Platform Backend CI/CD Pipeline Stack
 
 This stack creates a CI/CD pipeline using AWS CodePipeline to automatically
-deploy the E-Com67 platform when changes are pushed to the master branch.
+deploy the E-Com67 backend infrastructure when changes are pushed to the master branch.
 
 Architecture:
     Source (CodeCommit) -> Build (CDK Synth + Layer builds) -> Deploy (Data -> Compute -> Api)
 
-The pipeline is self-mutating, meaning it will update itself when pipeline
-code changes are pushed to the repository.
+The pipeline has self-mutation disabled for stability. Pipeline changes require
+manual deployment to avoid circular dependencies.
 """
 
 from aws_cdk import (
     Stack,
     Stage,
-    Environment,
     aws_codecommit as codecommit,
     aws_codebuild as codebuild,
     aws_codepipeline_actions as cpactions,
@@ -29,9 +28,9 @@ from stacks.compute_stack import ComputeStack
 from stacks.api_stack import ApiStack
 
 
-class E_Com67Stage(Stage):
+class BackendDeploymentStage(Stage):
     """
-    Deployment stage containing all E-Com67 stacks.
+    Deployment stage containing all E-Com67 backend stacks.
 
     This stage bundles DataStack, ComputeStack, and ApiStack together
     for deployment as a single unit in the pipeline.
@@ -71,17 +70,16 @@ class E_Com67Stage(Stage):
         api_stack.add_dependency(compute_stack)
 
 
-class PipelineStack(Stack):
+class BackendPipelineStack(Stack):
     """
-    CI/CD Pipeline stack for E-Com67 Platform.
+    CI/CD Pipeline stack for E-Com67 Backend Infrastructure.
 
-    This stack creates a self-mutating CodePipeline that:
+    This stack creates a CodePipeline that:
     1. Pulls source from CodeCommit (master branch)
     2. Builds Lambda layers and synthesizes CDK
-    3. Deploys all E-Com67 stacks in the correct order
+    3. Deploys all E-Com67 backend stacks in the correct order
 
-    The pipeline automatically updates itself when changes are detected
-    in the pipeline definition.
+    Self-mutation is disabled - pipeline updates require manual deployment.
     """
 
     def __init__(
@@ -95,7 +93,6 @@ class PipelineStack(Stack):
         super().__init__(scope, construct_id, **kwargs)
 
         # Reference the existing CodeCommit repository
-        # If it doesn't exist, you'll need to create it first
         repository = codecommit.Repository.from_repository_name(
             self,
             "E-Com67-Repository",
@@ -103,38 +100,33 @@ class PipelineStack(Stack):
         )
 
         # Define the source from CodeCommit
-        # Uses EventBridge events by default for faster triggering
+        # Uses EventBridge events for automatic triggering on push
         source = pipelines.CodePipelineSource.code_commit(
             repository=repository,
             branch=branch,
-            # EVENTS = trigger on push via EventBridge (faster)
-            # POLL = poll for changes (slower but works without EventBridge)
-            # NONE = no automatic trigger
             trigger=cpactions.CodeCommitTrigger.EVENTS
         )
 
-        # Create the CDK Pipeline with self-mutation disabled
-        # Pipeline changes require manual deployment to avoid circular dependencies
+        # Create the CDK Pipeline
         pipeline = pipelines.CodePipeline(
             self,
-            "E-Com67-Pipeline",
-            pipeline_name="e-com67-pipeline",
+            "BackendPipeline",
+            pipeline_name="e-com67-backend-pipeline",
 
-            # Disable self-mutation - pipeline updates are done manually
-            # This prevents circular dependency issues during pipeline updates
+            # Disable self-mutation for stability
+            # Pipeline updates are done manually to avoid circular dependencies
             self_mutation=False,
 
             # Cross-account not needed for single account deployment
             cross_account_keys=False,
 
             # Synth step - builds the CDK app and Lambda layers
-            # IMPORTANT: All layers built for x86_64 architecture to match Lambda functions
             synth=pipelines.ShellStep(
                 "Synth",
                 input=source,
-                # Set environment variable to synthesize pipeline stack
+                # Set environment variable to synthesize backend pipeline
                 env={
-                    "USE_PIPELINE": "true",
+                    "USE_BACKEND_PIPELINE": "true",
                 },
                 # Install dependencies and synthesize CDK
                 install_commands=[
@@ -149,6 +141,9 @@ class PipelineStack(Stack):
 
                     # Powertools layer
                     "pip install -r layers/powertools/requirements.txt -t layers/powertools/python/ --upgrade",
+
+                    # Utils layer
+                    "pip install -r layers/utils/requirements.txt -t layers/utils/python/ --upgrade",
 
                     # Stripe layer
                     "pip install -r layers/stripe/requirements.txt -t layers/stripe/python/ --upgrade",
@@ -219,9 +214,9 @@ class PipelineStack(Stack):
         )
 
         # Add the deployment stage
-        # The stage deploys all E-Com67 stacks (Data -> Compute -> Api)
+        # The stage deploys all E-Com67 backend stacks (Data -> Compute -> Api)
         pipeline.add_stage(
-            E_Com67Stage(
+            BackendDeploymentStage(
                 self,
                 "Deploy",
                 env=kwargs.get("env"),
@@ -236,7 +231,14 @@ class PipelineStack(Stack):
             self,
             "PipelineArn",
             value=pipeline.pipeline.pipeline_arn,
-            description="ARN of the E-Com67 CI/CD pipeline"
+            description="ARN of the E-Com67 backend CI/CD pipeline"
+        )
+
+        CfnOutput(
+            self,
+            "PipelineName",
+            value=pipeline.pipeline.pipeline_name,
+            description="Name of the E-Com67 backend CI/CD pipeline"
         )
 
         CfnOutput(
