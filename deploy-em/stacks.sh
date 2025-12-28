@@ -27,11 +27,12 @@ cdk deploy E-Com67-ComputeStack --require-approval never
 echo "🌐 Deploying API Stack..."
 cdk deploy E-Com67-ApiStack --require-approval never
 
+# Might need to deploy this stack tgt with the frontend pipeline stacks cuz pipeline depends on this output
 echo "Deploying Frontend Stack..."
-cdk deploy E-Com-FrontendStack --require-approval never
+cdk deploy E-Com67-FrontendStack --require-approval never
 
 echo "Deploying Backend Pipeline Stack..."
 USE_BACKEND_PIPELINE=true cdk deploy E-Com67-BackendPipelineStack 
 
 echo "Deploying Frontend Pipeline Stacks (Admin & Customer)..."
-USE_FRONTEND_PIPELINES=true cdk deploy E-Com67-AdminPipelineStack E-Com67-CustomerPipelineStack
+USE_FRONTEND_PIPELINES=true cdk deploy E-Com67-AdminPipelineStack E-Com67-CustomerPipelineStack --require-approval never

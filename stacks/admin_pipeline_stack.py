@@ -152,7 +152,7 @@ class AdminPipelineStack(Stack):
                 "phases": {
                     "build": {
                         "commands": [
-                            f"echo 'Invalidating CloudFront distribution...'",
+                            "echo 'Invalidating CloudFront distribution...'",
                             f"aws cloudfront create-invalidation --distribution-id {admin_distribution.distribution_id} --paths '/*'",
                         ]
                     }

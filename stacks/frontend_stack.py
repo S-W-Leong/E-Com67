@@ -11,8 +11,8 @@ Each frontend application gets its own S3 bucket and CloudFront distribution
 for independent deployment and caching strategies.
 
 Security:
-    Uses Origin Access Control (OAC) instead of legacy Origin Access Identity (OAI)
-    for secure access to S3 buckets from CloudFront.
+    Uses Origin Access Identity (OAI) for secure access to S3 buckets from CloudFront.
+    While OAI is legacy, it's still supported and works reliably with CDK high-level constructs.
 """
 
 from aws_cdk import (
@@ -23,7 +23,7 @@ from aws_cdk import (
     aws_s3 as s3,
     aws_cloudfront as cloudfront,
     aws_cloudfront_origins as origins,
-    aws_s3_deployment as s3deploy,
+    aws_iam as iam,
 )
 from constructs import Construct
 
@@ -40,7 +40,7 @@ class FrontendStack(Stack):
     - S3 static website hosting with versioning
     - CloudFront CDN for global content delivery
     - HTTPS-only access with security headers
-    - Origin Access Control (OAC) for secure S3 access
+    - Origin Access Identity (OAI) for secure S3 access
     - Automatic cache invalidation on deployment
     """
 
@@ -61,13 +61,12 @@ class FrontendStack(Stack):
         # ========================================
         
         # S3 bucket for admin dashboard static files
+        # Note: No website configuration - CloudFront handles routing via OAI
         self.admin_bucket = s3.Bucket(
             self,
             "AdminDashboardBucket",
             bucket_name=f"e-com67-admin-dashboard-{self.account}",
-            website_index_document=self.INDEX_HTML,
-            website_error_document=self.INDEX_HTML,  # SPA routing
-            public_read_access=False,  # CloudFront will access via OAC
+            public_read_access=False,  # CloudFront will access via OAI
             block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
             removal_policy=RemovalPolicy.RETAIN,  # Protect production data
             auto_delete_objects=False,
@@ -75,16 +74,24 @@ class FrontendStack(Stack):
             encryption=s3.BucketEncryption.S3_MANAGED,
         )
 
-        # CloudFront distribution for admin dashboard with OAC
+        # Origin Access Identity for admin dashboard (legacy but still supported)
+        admin_oai = cloudfront.OriginAccessIdentity(
+            self,
+            "AdminOAI",
+            comment="OAI for E-Com67 Admin Dashboard S3 bucket"
+        )
+
+        # Grant CloudFront OAI access to admin S3 bucket
+        self.admin_bucket.grant_read(admin_oai)
+
+        # CloudFront distribution for admin dashboard
         self.admin_distribution = cloudfront.Distribution(
             self,
             "AdminDashboardDistribution",
             default_behavior=cloudfront.BehaviorOptions(
-                origin=origins.S3BucketOrigin.with_origin_access_control(
+                origin=origins.S3Origin(
                     self.admin_bucket,
-                    origin_access_levels=[
-                        cloudfront.AccessLevel.READ
-                    ]
+                    origin_access_identity=admin_oai
                 ),
                 viewer_protocol_policy=cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
                 allowed_methods=cloudfront.AllowedMethods.ALLOW_GET_HEAD_OPTIONS,
@@ -109,7 +116,7 @@ class FrontendStack(Stack):
                 )
             ],
             price_class=cloudfront.PriceClass.PRICE_CLASS_100,  # US, Canada, Europe
-            comment="E-Com67 Admin Dashboard CDN with OAC"
+            comment="E-Com67 Admin Dashboard CDN"
         )
 
         # ========================================
@@ -117,13 +124,12 @@ class FrontendStack(Stack):
         # ========================================
         
         # S3 bucket for customer app static files
+        # Note: No website configuration - CloudFront handles routing via OAI
         self.customer_bucket = s3.Bucket(
             self,
             "CustomerAppBucket",
             bucket_name=f"e-com67-customer-app-{self.account}",
-            website_index_document=self.INDEX_HTML,
-            website_error_document=self.INDEX_HTML,  # SPA routing
-            public_read_access=False,  # CloudFront will access via OAC
+            public_read_access=False,  # CloudFront will access via OAI
             block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
             removal_policy=RemovalPolicy.RETAIN,  # Protect production data
             auto_delete_objects=False,
@@ -131,16 +137,24 @@ class FrontendStack(Stack):
             encryption=s3.BucketEncryption.S3_MANAGED,
         )
 
-        # CloudFront distribution for customer app with OAC
+        # Origin Access Identity for customer app (legacy but still supported)
+        customer_oai = cloudfront.OriginAccessIdentity(
+            self,
+            "CustomerOAI",
+            comment="OAI for E-Com67 Customer App S3 bucket"
+        )
+
+        # Grant CloudFront OAI access to customer S3 bucket
+        self.customer_bucket.grant_read(customer_oai)
+
+        # CloudFront distribution for customer app
         self.customer_distribution = cloudfront.Distribution(
             self,
             "CustomerAppDistribution",
             default_behavior=cloudfront.BehaviorOptions(
-                origin=origins.S3BucketOrigin.with_origin_access_control(
+                origin=origins.S3Origin(
                     self.customer_bucket,
-                    origin_access_levels=[
-                        cloudfront.AccessLevel.READ
-                    ]
+                    origin_access_identity=customer_oai
                 ),
                 viewer_protocol_policy=cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
                 allowed_methods=cloudfront.AllowedMethods.ALLOW_GET_HEAD_OPTIONS,
@@ -165,7 +179,7 @@ class FrontendStack(Stack):
                 )
             ],
             price_class=cloudfront.PriceClass.PRICE_CLASS_100,  # US, Canada, Europe
-            comment="E-Com67 Customer App CDN with OAC"
+            comment="E-Com67 Customer App CDN"
         )
 
         # ========================================

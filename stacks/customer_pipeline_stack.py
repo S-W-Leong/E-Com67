@@ -83,13 +83,16 @@ class CustomerPipelineStack(Stack):
                         },
                         "commands": [
                             "echo 'Installing dependencies...'",
-                            "cd frontends/customer-app",
-                            "echo 'Checking if package-lock.json exists...'",
-                            "ls -la package*",
                             "echo 'Node.js version:'",
                             "node --version",
                             "echo 'npm version:'",
                             "npm --version",
+                            "echo 'Installing shared package dependencies first...'",
+                            "cd frontends/shared",
+                            "npm install",
+                            "cd ../customer-app",
+                            "echo 'Checking if package-lock.json exists...'",
+                            "ls -la package*",
                             "if [ -f package-lock.json ]; then npm ci; else echo 'No package-lock.json found, using npm install' && npm install; fi",
                         ]
                     },
@@ -112,6 +115,7 @@ class CustomerPipelineStack(Stack):
                 },
                 "cache": {
                     "paths": [
+                        "frontends/shared/node_modules/**/*",
                         "frontends/customer-app/node_modules/**/*"
                     ]
                 }
@@ -152,7 +156,7 @@ class CustomerPipelineStack(Stack):
                 "phases": {
                     "build": {
                         "commands": [
-                            f"echo 'Invalidating CloudFront distribution...'",
+                            "echo 'Invalidating CloudFront distribution...'",
                             f"aws cloudfront create-invalidation --distribution-id {customer_distribution.distribution_id} --paths '/*'",
                         ]
                     }
