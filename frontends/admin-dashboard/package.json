@@ -15,6 +15,7 @@
     "aws-amplify": "^6.0.0",
     "@aws-amplify/ui-react": "^6.0.0",
     "axios": "^1.6.0",
+    "clsx": "^2.1.0",
     "lucide-react": "^0.263.1"
   },
   "devDependencies": {
