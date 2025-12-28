@@ -83,22 +83,44 @@ ComputeStack (Lambda, SQS, SNS, Step Functions, Secrets)
     |
     v
 ApiStack (REST API Gateway, WebSocket API Gateway)
+
+FrontendStack (S3 Buckets, CloudFront Distributions)
+    |
+    +---> AdminPipelineStack (Admin Dashboard CI/CD)
+    |
+    +---> CustomerPipelineStack (Customer App CI/CD)
 ```
 
-### CI/CD Pipeline (Optional)
+### CI/CD Pipeline Architecture (Optional)
 
 ```
-PipelineStack (CodePipeline, CodeBuild)
+BackendPipelineStack (CodePipeline, CodeBuild)
     |
     v
-┌─────────────┐    ┌─────────────┐    ┌──────────────┐    ┌─────────────┐
-│   Source    │───►│    Synth    │───►│ UpdatePipeline│───►│   Deploy    │
-│ (CodeCommit)│    │ (cdk synth) │    │ (Self-Mutate)│    │   Stages    │
-└─────────────┘    └─────────────┘    └──────────────┘    └─────────────┘
-                                                                  |
-                                              ┌───────────────────┼───────────────────┐
-                                              v                   v                   v
-                                         DataStack          ComputeStack          ApiStack
+┌─────────────┐    ┌─────────────┐    ┌─────────────┐
+│   Source    │───►│    Synth    │───►│   Deploy    │
+│ (CodeCommit)│    │ (cdk synth) │    │   Stages    │
+└─────────────┘    └─────────────┘    └─────────────┘
+                                              |
+                              ┌───────────────┼───────────────────┐
+                              v               v                   v
+                         DataStack      ComputeStack          ApiStack
+
+FrontendStack (S3 + CloudFront)
+    |
+    +---> AdminPipelineStack (CodePipeline)
+    |         |
+    |         v
+    |     ┌─────────┐    ┌─────────┐    ┌───────────────────────┐
+    |     │ Source  │───►│  Build  │───►│ Deploy + Invalidate   │
+    |     └─────────┘    └─────────┘    └───────────────────────┘
+    |
+    +---> CustomerPipelineStack (CodePipeline)
+              |
+              v
+          ┌─────────┐    ┌─────────┐    ┌───────────────────────┐
+          │ Source  │───►│  Build  │───►│ Deploy + Invalidate   │
+          └─────────┘    └─────────┘    └───────────────────────┘
 ```
 
 ---
@@ -116,7 +138,10 @@ e-com67/
 │   ├── data_stack.py          # DynamoDB, Cognito, OpenSearch, S3
 │   ├── compute_stack.py       # Lambda, SQS, SNS, Step Functions
 │   ├── api_stack.py           # API Gateway (REST + WebSocket)
-│   └── pipeline_stack.py      # CI/CD Pipeline (CodePipeline)
+│   ├── frontend_stack.py      # S3 buckets and CloudFront distributions
+│   ├── backend_pipeline_stack.py    # Backend CI/CD Pipeline
+│   ├── admin_pipeline_stack.py      # Admin dashboard CI/CD Pipeline
+│   └── customer_pipeline_stack.py   # Customer app CI/CD Pipeline
 │
 ├── lambda/                     # Lambda function implementations
 │   ├── product_crud/          # Product CRUD operations
@@ -185,8 +210,9 @@ e-com67/
 | **Secrets Manager** | API key storage | Stripe API key |
 | **CloudWatch** | Logging and monitoring | Structured logs, custom metrics |
 | **X-Ray** | Distributed tracing | Enabled on all Lambda functions |
-| **CodePipeline** | CI/CD pipeline orchestration | Self-mutating, EventBridge triggered |
-| **CodeBuild** | Build and synthesis | Lambda layers, CDK synth |
+| **CloudFront** | CDN for frontend delivery | HTTPS-only, SPA routing support |
+| **CodePipeline** | CI/CD pipeline orchestration | EventBridge triggered, three separate pipelines |
+| **CodeBuild** | Build and synthesis | Lambda layers, CDK synth, npm builds |
 | **CodeCommit** | Source code repository | Git-based version control |
 
 ---
@@ -344,23 +370,6 @@ E-Com67 supports multiple deployment modes:
 | **Backend Pipeline** | `USE_BACKEND_PIPELINE=true cdk deploy E-Com67-BackendPipelineStack` | Automated backend infrastructure |
 | **Frontend Pipelines** | `USE_FRONTEND_PIPELINES=true cdk deploy E-Com67-AdminPipelineStack E-Com67-CustomerPipelineStack` | Automated frontend deployments |
 
-### Quick Setup with Helper Script
-
-Use the provided deployment script for guided setup:
-
-```bash
-# Run the interactive deployment script
-./deploy_pipelines.sh
-```
-
-The script provides options to:
-1. Deploy backend CI/CD pipeline
-2. Deploy frontend stack (S3 + CloudFront)
-3. Deploy frontend CI/CD pipelines
-4. Destroy old pipeline stack
-5. Show pipeline status
-6. Deploy all pipelines at once
-
 ### Manual Setup
 
 #### Prerequisites
@@ -398,21 +407,31 @@ cdk deploy E-Com67-FrontendStack --require-approval never
 ```
 
 This creates:
-- S3 bucket for admin dashboard
-- S3 bucket for customer app
-- CloudFront distributions for both apps
+- S3 bucket for admin dashboard (`e-com67-admin-dashboard-{account}`)
+- S3 bucket for customer app (`e-com67-customer-app-{account}`)
+- CloudFront distributions for both apps with:
+  - Origin Access Identity (OAI) for secure S3 access
+  - HTTPS-only redirection
+  - SPA routing support (404 → index.html)
+  - Gzip compression enabled
+  - Price Class 100 (US, Canada, Europe)
 
 #### Step 3: Deploy Frontend Pipelines
 
 ```bash
-# Deploy both frontend pipelines
+# Deploy both frontend pipelines (requires FrontendStack to be deployed first)
 USE_FRONTEND_PIPELINES=true cdk deploy E-Com67-AdminPipelineStack E-Com67-CustomerPipelineStack --require-approval never
 ```
 
-This creates pipelines that will automatically:
-- Build React applications with npm
-- Deploy to S3
-- Invalidate CloudFront cache
+This creates two separate pipelines that will automatically:
+- **Admin Dashboard Pipeline**: Build and deploy `frontends/admin-dashboard/`
+- **Customer App Pipeline**: Build and deploy `frontends/customer-app/`
+
+Each pipeline performs:
+1. npm install/ci (with shared package support for customer app)
+2. npm run build (React → static files)
+3. S3 deployment (upload to respective bucket)
+4. CloudFront cache invalidation (clear CDN cache)
 
 ### Triggering Pipelines
 
@@ -441,19 +460,34 @@ aws codepipeline start-pipeline-execution --name e-com67-customer-app-pipeline
 
 #### Backend Pipeline Stages
 
-| Stage | Description |
-|-------|-------------|
-| **Source** | Pulls latest code from CodeCommit `master` branch |
-| **Synth** | Installs dependencies, builds Lambda layers, runs `cdk synth` |
-| **Deploy** | Deploys DataStack → ComputeStack → ApiStack sequentially |
+| Stage | Description | CodeBuild Specs |
+|-------|-------------|-----------------|
+| **Source** | Pulls latest code from CodeCommit `master` branch | EventBridge trigger on push |
+| **Synth** | Installs Python dependencies, builds Lambda layers (powertools, utils, stripe, opensearch, strands), runs `cdk synth` | Standard 7.0, Medium compute |
+| **Deploy** | Deploys DataStack → ComputeStack → ApiStack sequentially using CDK Pipelines | CloudFormation changesets |
+
+**Key Features:**
+- Self-mutation disabled for stability
+- Lambda layers built during synth stage
+- Compatible cdk-assets version (2.233.0)
+- Secrets Manager access for deployment
 
 #### Frontend Pipeline Stages
 
-| Stage | Description |
-|-------|-------------|
-| **Source** | Pulls latest code from CodeCommit `master` branch |
-| **Build** | Runs `npm ci` and `npm run build` in frontend directory |
-| **Deploy** | Uploads build artifacts to S3 and invalidates CloudFront cache |
+| Pipeline | Stage | Description | Build Details |
+|----------|-------|-------------|---------------|
+| **Admin Dashboard** | Source | Pulls from CodeCommit `master` | EventBridge trigger |
+| | Build | Runs `npm ci/install` and `npm run build` in `frontends/admin-dashboard/` | Node.js 20, outputs to `dist/` |
+| | Deploy | Uploads to S3 + CloudFront invalidation | S3DeployAction + CodeBuild invalidation |
+| **Customer App** | Source | Pulls from CodeCommit `master` | EventBridge trigger |
+| | Build | Installs shared package deps, then builds in `frontends/customer-app/` | Node.js 20, outputs to `dist/` |
+| | Deploy | Uploads to S3 + CloudFront invalidation | S3DeployAction + CodeBuild invalidation |
+
+**Key Features:**
+- Separate pipelines for independent deployment
+- Local caching for node_modules
+- Lint check (non-blocking)
+- CloudFront invalidation creates a new CodeBuild project for cache clearing
 
 ### Updating Pipelines
 
@@ -495,21 +529,40 @@ aws cloudformation describe-stacks \
 
 ### Accessing Deployed Frontends
 
-After frontend pipelines complete:
+After FrontendStack is deployed, you can access the CloudFront URLs:
 
 ```bash
-# Get admin dashboard URL
+# Get admin dashboard CloudFront URL
 aws cloudformation describe-stacks \
   --stack-name E-Com67-FrontendStack \
   --query "Stacks[0].Outputs[?OutputKey=='AdminUrl'].OutputValue" \
   --output text
 
-# Get customer app URL
+# Get customer app CloudFront URL
 aws cloudformation describe-stacks \
   --stack-name E-Com67-FrontendStack \
   --query "Stacks[0].Outputs[?OutputKey=='CustomerUrl'].OutputValue" \
   --output text
+
+# Get S3 bucket names
+aws cloudformation describe-stacks \
+  --stack-name E-Com67-FrontendStack \
+  --query "Stacks[0].Outputs[?contains(OutputKey, 'BucketName')].{Key:OutputKey, Value:OutputValue}" \
+  --output table
+
+# Get CloudFront distribution IDs
+aws cloudformation describe-stacks \
+  --stack-name E-Com67-FrontendStack \
+  --query "Stacks[0].Outputs[?contains(OutputKey, 'DistributionId')].{Key:OutputKey, Value:OutputValue}" \
+  --output table
 ```
+
+**CloudFront Features:**
+- HTTPS-only access with automatic redirection
+- SPA routing support (404/403 errors redirect to index.html)
+- Gzip compression enabled for faster load times
+- Origin Access Identity (OAI) prevents direct S3 access
+- Price Class 100 (optimized for US, Canada, Europe)
 
 ### Troubleshooting Pipelines
 
@@ -550,17 +603,28 @@ aws cloudformation describe-stacks \
 ### Cost Considerations
 
 **Pipeline Costs:**
-- CodePipeline: $1/month per active pipeline
+- CodePipeline: $1/month per active pipeline × 3 pipelines = $3/month
 - CodeBuild: $0.005/minute (build time)
+  - Backend builds: ~5-8 minutes (Lambda layers + CDK synth)
+  - Frontend builds: ~2-3 minutes each (npm build)
 - S3: Storage for artifacts (~$0.023/GB)
-- CloudFront: Data transfer and requests
+- CloudFront:
+  - Data transfer: $0.085/GB (first 10TB)
+  - Requests: $0.0075 per 10,000 HTTPS requests
+  - Origin fetch: Free from S3 in same region
 
 **Estimated Monthly Costs:**
-- 3 pipelines: ~$3/month
-- Build time (10 builds/month, 5 min each): ~$0.25/month
+- 3 pipelines (backend + 2 frontends): $3/month
+- Build time (10 builds/month):
+  - Backend: ~$0.40/month (8 min × 10 builds × $0.005)
+  - Frontends: ~$0.30/month (3 min × 2 × 10 builds × $0.005)
 - Artifacts storage: <$1/month
+- CloudFront (dev/low traffic): ~$1-5/month
+  - 2 distributions (admin + customer)
+  - Caching reduces origin requests
 
-**Total:** ~$5-10/month for CI/CD infrastructure
+**Total:** ~$6-10/month for CI/CD infrastructure
+**Total with CloudFront:** ~$10-20/month (including frontend delivery)
 
 ---
 
@@ -1351,23 +1415,43 @@ aws xray get-service-graph --start-time $(date -v-1H +%s) --end-time $(date +%s)
 
 E-Com67 is designed for cost efficiency:
 
-| Resource | Optimization |
-|----------|-------------|
-| DynamoDB | On-demand billing, no idle costs |
-| Lambda | Pay per invocation only |
-| OpenSearch | t3.small.search (~$25/month vs $350+/month serverless) |
-| Cognito | Free tier for authentication |
-| API Gateway | Pay per request |
+| Resource | Optimization | Estimated Cost (Dev) |
+|----------|-------------|---------------------|
+| DynamoDB | On-demand billing, no idle costs | ~$5-10/month |
+| Lambda | Pay per invocation only | <$1/month |
+| OpenSearch | t3.small.search (~$25/month vs $350+/month serverless) | ~$25/month |
+| Cognito | Free tier for authentication (first 50k MAUs) | Free |
+| API Gateway | Pay per request | <$1/month |
+| S3 | Versioning enabled, minimal storage | <$1/month |
+| CloudFront | 2 distributions, Price Class 100 (US/EU/CA only) | ~$1-5/month |
+| CodePipeline | 3 pipelines (optional CI/CD) | $3/month |
+| CodeBuild | Build minutes (optional CI/CD) | ~$1/month |
+| Secrets Manager | 1 secret (Stripe key) | ~$0.40/month |
+| SES | Email sending (low volume) | <$1/month |
 
-### Estimated Monthly Costs (Development)
+### Estimated Monthly Costs
 
-- DynamoDB: ~$5-10 (based on usage)
+**Base Infrastructure (without CI/CD):**
+- DynamoDB: ~$5-10
 - OpenSearch: ~$25
-- Lambda: <$1 (low traffic)
-- API Gateway: <$1 (low traffic)
-- Other services: <$5
+- Lambda + API Gateway: <$2
+- CloudFront (2 distributions): ~$1-5
+- S3 + SES + Secrets + Other: ~$3-5
 
-**Total:** ~$35-45/month for development
+**Subtotal:** ~$35-50/month
+
+**With CI/CD Pipelines:**
+- Add CodePipeline: +$3/month
+- Add CodeBuild: +$1/month
+
+**Total (with CI/CD):** ~$40-55/month for development
+
+**Production Considerations:**
+- DynamoDB: Switch to provisioned capacity with auto-scaling for predictable traffic
+- OpenSearch: Consider serverless for true auto-scaling (trade-off: higher base cost)
+- CloudFront: Upgrade to Price Class All for global reach
+- Lambda: Consider Provisioned Concurrency for critical functions
+- Implement CloudWatch cost anomaly detection
 
 ---
 

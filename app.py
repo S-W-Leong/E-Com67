@@ -28,6 +28,7 @@ from stacks.data_stack import DataStack
 from stacks.compute_stack import ComputeStack
 from stacks.api_stack import ApiStack
 from stacks.frontend_stack import FrontendStack
+from stacks.admin_insights_stack import AdminInsightsStack
 from stacks.backend_pipeline_stack import BackendPipelineStack
 from stacks.admin_pipeline_stack import AdminPipelineStack
 from stacks.customer_pipeline_stack import CustomerPipelineStack
@@ -134,10 +135,20 @@ else:
         description="E-Com67 Platform - Frontend hosting with S3 and CloudFront"
     )
 
+    # Admin Insights layer - AI agent for admin analytics
+    admin_insights_stack = AdminInsightsStack(
+        app,
+        "E-Com67-AdminInsightsStack",
+        data_stack=data_stack,
+        env=env,
+        description="E-Com67 Platform - Admin Insights Agent with Bedrock AgentCore"
+    )
+
     # Add dependencies to ensure proper deployment order
     compute_stack.add_dependency(data_stack)
     api_stack.add_dependency(data_stack)
     api_stack.add_dependency(compute_stack)
+    admin_insights_stack.add_dependency(data_stack)
     # Frontend stack is independent and can be deployed in parallel
 
 app.synth()
