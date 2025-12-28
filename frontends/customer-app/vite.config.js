@@ -18,6 +18,6 @@ export default defineConfig({
   },
   optimizeDeps: {
     // Include shared package dependencies for pre-bundling
-    include: ['axios', 'lucide-react', 'clsx']
+    include: ['lucide-react', 'clsx']
   }
 })

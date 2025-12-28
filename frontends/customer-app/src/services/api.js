@@ -1,3 +1,4 @@
+import axios from 'axios'
 import { fetchAuthSession } from 'aws-amplify/auth'
 import { ApiClient } from '@e-com67/shared'
 
@@ -14,8 +15,8 @@ const getAuthToken = async () => {
   }
 }
 
-// Create API client instance
-const apiClient = new ApiClient(API_BASE_URL, getAuthToken)
+// Create API client instance with axios
+const apiClient = new ApiClient(API_BASE_URL, getAuthToken, axios)
 
 /**
  * Product API Service
