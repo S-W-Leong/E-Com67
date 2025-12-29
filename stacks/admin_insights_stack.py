@@ -15,9 +15,14 @@ from aws_cdk import (
     aws_iam as iam,
     aws_lambda as _lambda,
     aws_apigateway as apigateway,
+    aws_apigatewayv2 as apigatewayv2,
+    aws_apigatewayv2_integrations as apigatewayv2_integrations,
+    aws_apigatewayv2_authorizers as apigatewayv2_authorizers,
+    aws_dynamodb as dynamodb,
     CfnOutput,
     Fn,
-    Duration
+    Duration,
+    RemovalPolicy
 )
 from constructs import Construct
 
@@ -39,11 +44,20 @@ class AdminInsightsStack(Stack):
         # Create Lambda layers
         self._create_lambda_layers()
         
+        # Create DynamoDB connections table for WebSocket
+        self._create_connections_table()
+        
         # Create analytics tool Lambda functions
         self._create_analytics_tool_lambdas()
         
+        # Create WebSocket connection/disconnect handlers
+        self._create_websocket_handlers()
+        
         # Create agent Lambda function
         self._create_agent_lambda()
+        
+        # Create WebSocket API Gateway
+        self._create_websocket_api()
         
         # Create cross-stack exports
         self._create_exports()
@@ -258,6 +272,42 @@ class AdminInsightsStack(Stack):
             layer_version_arn=Fn.import_value("E-Com67-StrandsLayerArn")
         )
 
+    def _create_connections_table(self):
+        """
+        Create DynamoDB table for WebSocket connections.
+        
+        This table stores active WebSocket connections with:
+        - connectionId: Primary key (WebSocket connection ID)
+        - sessionId: Agent session ID for this connection
+        - actorId: Admin user ID
+        - connectedAt: Connection timestamp
+        - ttl: Time-to-live for automatic cleanup (24 hours)
+        
+        Requirements: 10.4
+        """
+        self.connections_table = dynamodb.Table(
+            self, "ConnectionsTable",
+            table_name="e-com67-admin-insights-connections",
+            partition_key=dynamodb.Attribute(
+                name="connectionId",
+                type=dynamodb.AttributeType.STRING
+            ),
+            billing_mode=dynamodb.BillingMode.PAY_PER_REQUEST,
+            time_to_live_attribute="ttl",  # Enable TTL for automatic cleanup
+            point_in_time_recovery=True,
+            removal_policy=RemovalPolicy.DESTROY  # For development
+        )
+        
+        # Add GSI for querying by actor_id (useful for admin operations)
+        self.connections_table.add_global_secondary_index(
+            index_name="actorId-index",
+            partition_key=dynamodb.Attribute(
+                name="actorId",
+                type=dynamodb.AttributeType.STRING
+            ),
+            projection_type=dynamodb.ProjectionType.ALL
+        )
+
     def _create_analytics_tool_lambdas(self):
         """Create Lambda functions for analytics tools"""
         
@@ -325,6 +375,65 @@ class AdminInsightsStack(Stack):
             description="Analytics tool for product search using OpenSearch",
             tracing=_lambda.Tracing.ACTIVE
         )
+
+    def _create_websocket_handlers(self):
+        """
+        Create Lambda functions for WebSocket connection management.
+        
+        These handlers manage WebSocket lifecycle:
+        - Connect handler: Stores connection info and initializes session
+        - Disconnect handler: Cleans up connection and terminates session
+        
+        Requirements: 4.1, 4.5, 10.4
+        """
+        # Lambda function for WebSocket $connect route
+        self.websocket_connect_lambda = _lambda.Function(
+            self, "WebSocketConnectLambda",
+            function_name="e-com67-admin-insights-websocket-connect",
+            runtime=_lambda.Runtime.PYTHON_3_10,
+            handler="websocket_connect.handler",
+            code=_lambda.Code.from_asset("lambda/admin_insights_agent"),
+            role=self.agent_execution_role,
+            timeout=Duration.seconds(10),
+            memory_size=256,
+            environment={
+                "CONNECTIONS_TABLE_NAME": self.connections_table.table_name,
+                "REGION": self.region,
+                "POWERTOOLS_SERVICE_NAME": "admin-insights-websocket-connect",
+                "LOG_LEVEL": "INFO"
+            },
+            layers=[self.powertools_layer, self.utils_layer],
+            description="WebSocket connection handler for Admin Insights Agent",
+            tracing=_lambda.Tracing.ACTIVE
+        )
+        
+        # Grant DynamoDB permissions to connect handler
+        self.connections_table.grant_write_data(self.websocket_connect_lambda)
+        
+        # Lambda function for WebSocket $disconnect route
+        self.websocket_disconnect_lambda = _lambda.Function(
+            self, "WebSocketDisconnectLambda",
+            function_name="e-com67-admin-insights-websocket-disconnect",
+            runtime=_lambda.Runtime.PYTHON_3_10,
+            handler="websocket_disconnect.handler",
+            code=_lambda.Code.from_asset("lambda/admin_insights_agent"),
+            role=self.agent_execution_role,
+            timeout=Duration.seconds(10),
+            memory_size=256,
+            environment={
+                "CONNECTIONS_TABLE_NAME": self.connections_table.table_name,
+                "MEMORY_ID": "AdminInsightsAgentMemory-Sd77nY40tq",  # Same as agent Lambda
+                "REGION": self.region,
+                "POWERTOOLS_SERVICE_NAME": "admin-insights-websocket-disconnect",
+                "LOG_LEVEL": "INFO"
+            },
+            layers=[self.powertools_layer, self.utils_layer, self.strands_layer],
+            description="WebSocket disconnect handler for Admin Insights Agent",
+            tracing=_lambda.Tracing.ACTIVE
+        )
+        
+        # Grant DynamoDB permissions to disconnect handler
+        self.connections_table.grant_read_write_data(self.websocket_disconnect_lambda)
 
     def _create_exports(self):
         """Create CloudFormation exports for cross-stack resource sharing"""
@@ -394,6 +503,36 @@ class AdminInsightsStack(Stack):
             export_name="E-Com67-AdminInsightsAgentLambdaArn",
             description="Admin Insights Agent Lambda ARN"
         )
+        
+        # WebSocket API exports
+        CfnOutput(
+            self, "WebSocketAPIId",
+            value=self.websocket_api.ref,
+            export_name="E-Com67-AdminInsightsWebSocketAPIId",
+            description="Admin Insights WebSocket API ID"
+        )
+        
+        CfnOutput(
+            self, "WebSocketURL",
+            value=self.websocket_url,
+            export_name="E-Com67-AdminInsightsWebSocketURL",
+            description="Admin Insights WebSocket API URL"
+        )
+        
+        # Connections table exports
+        CfnOutput(
+            self, "ConnectionsTableName",
+            value=self.connections_table.table_name,
+            export_name="E-Com67-AdminInsightsConnectionsTableName",
+            description="Admin Insights WebSocket Connections Table Name"
+        )
+        
+        CfnOutput(
+            self, "ConnectionsTableArn",
+            value=self.connections_table.table_arn,
+            export_name="E-Com67-AdminInsightsConnectionsTableArn",
+            description="Admin Insights WebSocket Connections Table ARN"
+        )
 
     def _create_agent_lambda(self):
         """
@@ -405,6 +544,7 @@ class AdminInsightsStack(Stack):
         - Invokes analytics tools based on user queries
         - Applies guardrails to inputs and outputs
         - Formats and returns responses
+        - Supports WebSocket streaming responses
         
         Prerequisites:
         - Run scripts/create_admin_insights_memory.py to create memory and get MEMORY_ID
@@ -417,6 +557,8 @@ class AdminInsightsStack(Stack):
         - ORDER_TRENDS_LAMBDA_ARN: ARN of order trends tool Lambda
         - SALES_INSIGHTS_LAMBDA_ARN: ARN of sales insights tool Lambda
         - PRODUCT_SEARCH_LAMBDA_ARN: ARN of product search tool Lambda
+        - CONNECTIONS_TABLE_NAME: DynamoDB connections table name
+        - WEBSOCKET_API_ENDPOINT: WebSocket API endpoint (set after API creation)
         - REGION: AWS region
         """
         
@@ -440,6 +582,8 @@ class AdminInsightsStack(Stack):
                 "ORDER_TRENDS_LAMBDA_ARN": self.order_trends_lambda.function_arn,
                 "SALES_INSIGHTS_LAMBDA_ARN": self.sales_insights_lambda.function_arn,
                 "PRODUCT_SEARCH_LAMBDA_ARN": self.product_search_lambda.function_arn,
+                "CONNECTIONS_TABLE_NAME": self.connections_table.table_name,
+                "WEBSOCKET_API_ENDPOINT": "",  # Will be set after WebSocket API creation
                 "REGION": self.region,
                 "POWERTOOLS_SERVICE_NAME": "admin-insights-agent",
                 "LOG_LEVEL": "INFO"
@@ -454,4 +598,181 @@ class AdminInsightsStack(Stack):
         self.order_trends_lambda.grant_invoke(self.agent_lambda)
         self.sales_insights_lambda.grant_invoke(self.agent_lambda)
         self.product_search_lambda.grant_invoke(self.agent_lambda)
+        
+        # Grant DynamoDB permissions for connections table
+        self.connections_table.grant_read_write_data(self.agent_lambda)
+
+    def _create_websocket_api(self):
+        """
+        Create WebSocket API Gateway for real-time agent communication.
+        
+        This API provides:
+        - $connect route: Establishes WebSocket connection with Cognito auth
+        - $disconnect route: Cleans up connection and session
+        - sendMessage route: Sends messages to agent
+        - $default route: Handles unmatched routes
+        
+        Requirements: 10.4
+        """
+        # Create WebSocket API
+        self.websocket_api = apigatewayv2.CfnApi(
+            self, "AdminInsightsWebSocketAPI",
+            name="AdminInsightsWebSocketAPI",
+            protocol_type="WEBSOCKET",
+            route_selection_expression="$request.body.action",
+            description="WebSocket API for Admin Insights Agent real-time communication"
+        )
+        
+        # Create Cognito authorizer for WebSocket
+        # This authorizer validates JWT tokens from the Cognito User Pool
+        self.websocket_authorizer = apigatewayv2.CfnAuthorizer(
+            self, "WebSocketCognitoAuthorizer",
+            api_id=self.websocket_api.ref,
+            name="CognitoAuthorizer",
+            authorizer_type="REQUEST",
+            authorizer_uri=f"arn:aws:apigateway:{self.region}:lambda:path/2015-03-31/functions/{self.websocket_connect_lambda.function_arn}/invocations",
+            identity_source=["route.request.querystring.token"]
+        )
+        
+        # Note: For production, use a proper JWT authorizer Lambda
+        # For now, we'll rely on the connect handler to validate tokens
+        
+        # Create Lambda integrations
+        connect_integration = apigatewayv2.CfnIntegration(
+            self, "ConnectIntegration",
+            api_id=self.websocket_api.ref,
+            integration_type="AWS_PROXY",
+            integration_uri=f"arn:aws:apigateway:{self.region}:lambda:path/2015-03-31/functions/{self.websocket_connect_lambda.function_arn}/invocations",
+            integration_method="POST"
+        )
+        
+        disconnect_integration = apigatewayv2.CfnIntegration(
+            self, "DisconnectIntegration",
+            api_id=self.websocket_api.ref,
+            integration_type="AWS_PROXY",
+            integration_uri=f"arn:aws:apigateway:{self.region}:lambda:path/2015-03-31/functions/{self.websocket_disconnect_lambda.function_arn}/invocations",
+            integration_method="POST"
+        )
+        
+        send_message_integration = apigatewayv2.CfnIntegration(
+            self, "SendMessageIntegration",
+            api_id=self.websocket_api.ref,
+            integration_type="AWS_PROXY",
+            integration_uri=f"arn:aws:apigateway:{self.region}:lambda:path/2015-03-31/functions/{self.agent_lambda.function_arn}/invocations",
+            integration_method="POST"
+        )
+        
+        default_integration = apigatewayv2.CfnIntegration(
+            self, "DefaultIntegration",
+            api_id=self.websocket_api.ref,
+            integration_type="AWS_PROXY",
+            integration_uri=f"arn:aws:apigateway:{self.region}:lambda:path/2015-03-31/functions/{self.agent_lambda.function_arn}/invocations",
+            integration_method="POST"
+        )
+        
+        # Create routes
+        connect_route = apigatewayv2.CfnRoute(
+            self, "ConnectRoute",
+            api_id=self.websocket_api.ref,
+            route_key="$connect",
+            authorization_type="NONE",  # Auth handled in Lambda
+            target=f"integrations/{connect_integration.ref}"
+        )
+        
+        disconnect_route = apigatewayv2.CfnRoute(
+            self, "DisconnectRoute",
+            api_id=self.websocket_api.ref,
+            route_key="$disconnect",
+            authorization_type="NONE",
+            target=f"integrations/{disconnect_integration.ref}"
+        )
+        
+        send_message_route = apigatewayv2.CfnRoute(
+            self, "SendMessageRoute",
+            api_id=self.websocket_api.ref,
+            route_key="sendMessage",
+            authorization_type="NONE",
+            target=f"integrations/{send_message_integration.ref}"
+        )
+        
+        default_route = apigatewayv2.CfnRoute(
+            self, "DefaultRoute",
+            api_id=self.websocket_api.ref,
+            route_key="$default",
+            authorization_type="NONE",
+            target=f"integrations/{default_integration.ref}"
+        )
+        
+        # Create deployment
+        deployment = apigatewayv2.CfnDeployment(
+            self, "WebSocketDeployment",
+            api_id=self.websocket_api.ref
+        )
+        
+        # Ensure deployment happens after routes are created
+        deployment.add_dependency(connect_route)
+        deployment.add_dependency(disconnect_route)
+        deployment.add_dependency(send_message_route)
+        deployment.add_dependency(default_route)
+        
+        # Create stage
+        stage = apigatewayv2.CfnStage(
+            self, "WebSocketStage",
+            api_id=self.websocket_api.ref,
+            stage_name="prod",
+            deployment_id=deployment.ref,
+            description="Production stage for Admin Insights WebSocket API",
+            default_route_settings=apigatewayv2.CfnStage.RouteSettingsProperty(
+                logging_level="INFO",
+                data_trace_enabled=True,
+                detailed_metrics_enabled=True
+            )
+        )
+        
+        # Grant API Gateway permission to invoke Lambda functions
+        self.websocket_connect_lambda.add_permission(
+            "WebSocketConnectInvokePermission",
+            principal=iam.ServicePrincipal("apigateway.amazonaws.com"),
+            action="lambda:InvokeFunction",
+            source_arn=f"arn:aws:execute-api:{self.region}:{self.account}:{self.websocket_api.ref}/*/$connect"
+        )
+        
+        self.websocket_disconnect_lambda.add_permission(
+            "WebSocketDisconnectInvokePermission",
+            principal=iam.ServicePrincipal("apigateway.amazonaws.com"),
+            action="lambda:InvokeFunction",
+            source_arn=f"arn:aws:execute-api:{self.region}:{self.account}:{self.websocket_api.ref}/*/$disconnect"
+        )
+        
+        self.agent_lambda.add_permission(
+            "WebSocketSendMessageInvokePermission",
+            principal=iam.ServicePrincipal("apigateway.amazonaws.com"),
+            action="lambda:InvokeFunction",
+            source_arn=f"arn:aws:execute-api:{self.region}:{self.account}:{self.websocket_api.ref}/*/sendMessage"
+        )
+        
+        self.agent_lambda.add_permission(
+            "WebSocketDefaultInvokePermission",
+            principal=iam.ServicePrincipal("apigateway.amazonaws.com"),
+            action="lambda:InvokeFunction",
+            source_arn=f"arn:aws:execute-api:{self.region}:{self.account}:{self.websocket_api.ref}/*/$default"
+        )
+        
+        # Grant agent Lambda permission to post to WebSocket connections
+        self.agent_execution_role.add_to_policy(
+            iam.PolicyStatement(
+                effect=iam.Effect.ALLOW,
+                actions=["execute-api:ManageConnections"],
+                resources=[
+                    f"arn:aws:execute-api:{self.region}:{self.account}:{self.websocket_api.ref}/*"
+                ]
+            )
+        )
+        
+        # Store WebSocket endpoint URL
+        self.websocket_url = f"wss://{self.websocket_api.ref}.execute-api.{self.region}.amazonaws.com/{stage.stage_name}"
+        
+        # Update agent Lambda environment with WebSocket endpoint
+        # Note: This creates a circular dependency, so we'll export it instead
+        # and update the Lambda manually or via a custom resource
 

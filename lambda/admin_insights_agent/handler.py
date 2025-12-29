@@ -1,27 +1,34 @@
 """
-Admin Insights Agent Lambda Handler
+Admin Insights Agent Lambda Handler - WebSocket sendMessage Route
 
-This module implements the main Lambda handler for the Admin Insights Agent.
-It provides comprehensive error handling, observability, and retry logic for
-processing admin queries through the Bedrock AgentCore agent.
+This module implements the Lambda handler for the WebSocket sendMessage route.
+It processes admin queries through the Bedrock AgentCore agent and streams
+responses back via WebSocket.
+
+This handler is ONLY for the sendMessage route. Connection management is handled by:
+- websocket_connect.py (handles $connect route)
+- websocket_disconnect.py (handles $disconnect route)
 
 Key Features:
 - AWS Lambda Powertools integration (logging, tracing, metrics)
 - Comprehensive error handling for all error categories
 - Exponential backoff retry logic for transient failures
 - CloudWatch metrics emission
-- Structured error responses
+- WebSocket streaming response support
+- Session context retrieval from connections table
 
 Requirements:
+- Requirements 1.4: Streaming response generation
 - Requirements 9.1: Error logging and handling
 - Requirements 9.2: Structured error responses
 - Requirements 9.3: CloudWatch metrics and observability
+- Requirements 10.4: WebSocket API integration
 """
 
 import os
 import json
 import time
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Generator
 from datetime import datetime
 from enum import Enum
 
@@ -50,6 +57,16 @@ metrics = Metrics(namespace="AdminInsightsAgent")
 # Environment variables
 MEMORY_ID = os.environ.get('MEMORY_ID', '')
 AWS_REGION = os.environ.get('AWS_REGION', 'ap-southeast-1')
+WEBSOCKET_API_ENDPOINT = os.environ.get('WEBSOCKET_API_ENDPOINT', '')
+CONNECTIONS_TABLE_NAME = os.environ.get('CONNECTIONS_TABLE_NAME', '')
+
+# Initialize DynamoDB for WebSocket connections
+dynamodb = boto3.resource('dynamodb', region_name=AWS_REGION)
+connections_table = dynamodb.Table(CONNECTIONS_TABLE_NAME) if CONNECTIONS_TABLE_NAME else None
+
+# Initialize API Gateway Management API client (for WebSocket)
+# This will be initialized per-request with the correct endpoint
+apigw_management_client = None
 
 # Retry configuration
 MAX_RETRIES = 3
@@ -113,39 +130,6 @@ class AgentError(Exception):
         self.retryable = retryable
 
 
-def create_error_response(
-    error: AgentError,
-    request_id: str
-) -> Dict[str, Any]:
-    """
-    Create a structured error response.
-    
-    Args:
-        error: AgentError instance
-        request_id: Lambda request ID for tracing
-    
-    Returns:
-        Formatted error response dictionary
-    """
-    return {
-        "statusCode": error.status_code,
-        "headers": {
-            "Content-Type": "application/json",
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Headers": "Content-Type,Authorization",
-            "Access-Control-Allow-Methods": "POST,OPTIONS"
-        },
-        "body": json.dumps({
-            "error": {
-                "code": error.code.value,
-                "message": error.message,
-                "timestamp": int(datetime.now().timestamp()),
-                "requestId": request_id,
-                "details": error.details
-            }
-        })
-    }
-
 
 def exponential_backoff(
     attempt: int,
@@ -177,27 +161,209 @@ def exponential_backoff(
     return backoff_ms / 1000.0
 
 
+def get_apigw_management_client(endpoint_url: str):
+    """
+    Get or create API Gateway Management API client for WebSocket.
+    
+    Args:
+        endpoint_url: WebSocket API endpoint URL
+    
+    Returns:
+        boto3 client for API Gateway Management API
+    """
+    return boto3.client(
+        'apigatewaymanagementapi',
+        endpoint_url=endpoint_url,
+        region_name=AWS_REGION
+    )
+
+
+@tracer.capture_method
+def send_websocket_message(
+    connection_id: str,
+    message_type: str,
+    content: str,
+    endpoint_url: str
+) -> bool:
+    """
+    Send a message to a WebSocket connection.
+    
+    Message format: {"type": "chunk|complete|error", "content": str}
+    
+    Args:
+        connection_id: WebSocket connection ID
+        message_type: Type of message (chunk, complete, error)
+        content: Message content
+        endpoint_url: WebSocket API endpoint URL
+    
+    Returns:
+        True if message sent successfully, False otherwise
+    """
+    try:
+        client = get_apigw_management_client(endpoint_url)
+        
+        message = {
+            "type": message_type,
+            "content": content,
+            "timestamp": int(datetime.now().timestamp())
+        }
+        
+        client.post_to_connection(
+            ConnectionId=connection_id,
+            Data=json.dumps(message).encode('utf-8')
+        )
+        
+        logger.debug("WebSocket message sent", extra={
+            "connectionId": connection_id,
+            "messageType": message_type,
+            "contentLength": len(content)
+        })
+        
+        return True
+        
+    except client.exceptions.GoneException:
+        # Connection is stale/closed
+        logger.warning("WebSocket connection gone", extra={
+            "connectionId": connection_id
+        })
+        
+        # Clean up stale connection from DynamoDB
+        if connections_table:
+            try:
+                connections_table.delete_item(Key={'connectionId': connection_id})
+                logger.info("Cleaned up stale connection", extra={
+                    "connectionId": connection_id
+                })
+            except Exception as e:
+                logger.error("Failed to clean up stale connection", extra={
+                    "connectionId": connection_id,
+                    "error": str(e)
+                })
+        
+        return False
+        
+    except Exception as e:
+        logger.error("Failed to send WebSocket message", extra={
+            "connectionId": connection_id,
+            "error": str(e),
+            "errorType": type(e).__name__
+        })
+        return False
+
+
+@tracer.capture_method
+def stream_response_to_websocket(
+    connection_id: str,
+    response_generator: Generator[str, None, None],
+    endpoint_url: str
+) -> bool:
+    """
+    Stream response chunks to WebSocket connection.
+    
+    Args:
+        connection_id: WebSocket connection ID
+        response_generator: Generator yielding response chunks
+        endpoint_url: WebSocket API endpoint URL
+    
+    Returns:
+        True if streaming completed successfully, False otherwise
+    """
+    try:
+        chunk_count = 0
+        
+        for chunk in response_generator:
+            if not send_websocket_message(
+                connection_id=connection_id,
+                message_type="chunk",
+                content=chunk,
+                endpoint_url=endpoint_url
+            ):
+                # Connection is gone, stop streaming
+                logger.warning("Stopped streaming due to connection loss", extra={
+                    "connectionId": connection_id,
+                    "chunksStreamed": chunk_count
+                })
+                return False
+            
+            chunk_count += 1
+        
+        # Send completion message
+        send_websocket_message(
+            connection_id=connection_id,
+            message_type="complete",
+            content="",
+            endpoint_url=endpoint_url
+        )
+        
+        logger.info("Response streaming completed", extra={
+            "connectionId": connection_id,
+            "chunksStreamed": chunk_count
+        })
+        
+        metrics.add_metric(name="ResponseChunksStreamed", unit=MetricUnit.Count, value=chunk_count)
+        
+        return True
+        
+    except Exception as e:
+        logger.error("Error during response streaming", extra={
+            "connectionId": connection_id,
+            "error": str(e)
+        })
+        
+        # Try to send error message
+        try:
+            send_websocket_message(
+                connection_id=connection_id,
+                message_type="error",
+                content="An error occurred while streaming the response",
+                endpoint_url=endpoint_url
+            )
+        except:
+            pass
+        
+        return False
+
+
 @tracer.capture_method
 def validate_request(event: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Validate incoming request and extract parameters.
+    Validate incoming WebSocket sendMessage request and extract parameters.
+    
+    This function assumes the connection has already been established and validated
+    by the websocket_connect handler. It retrieves session context from the
+    connections table.
     
     Args:
-        event: Lambda event dictionary
+        event: Lambda event dictionary from WebSocket API Gateway
     
     Returns:
-        Validated request parameters
+        Validated request parameters including:
+        - message: User message
+        - session_id: Session identifier (from connections table)
+        - actor_id: Admin user ID (from connections table)
+        - connection_id: WebSocket connection ID
     
     Raises:
         AgentError: If validation fails
     """
     try:
-        # Parse body if it's a string
+        # Extract connection ID from WebSocket event
+        request_context = event.get('requestContext', {})
+        connection_id = request_context.get('connectionId')
+        
+        if not connection_id:
+            raise AgentError(
+                code=ErrorCode.INVALID_INPUT,
+                message="Missing connection ID. This handler only processes WebSocket events.",
+                status_code=400
+            )
+        
+        # Parse body
         body = event.get('body', {})
         if isinstance(body, str):
             body = json.loads(body)
         
-        # Extract required parameters
+        # Extract message
         message = body.get('message')
         if not message:
             raise AgentError(
@@ -215,39 +381,63 @@ def validate_request(event: Dict[str, Any]) -> Dict[str, Any]:
                 details={"message_type": type(message).__name__}
             )
         
-        # Extract optional parameters
-        session_id = body.get('sessionId')
-        actor_id = body.get('actorId')
-        
-        # Extract actor_id from authorizer context if not provided
-        if not actor_id:
-            request_context = event.get('requestContext', {})
-            authorizer = request_context.get('authorizer', {})
-            claims = authorizer.get('claims', {})
-            actor_id = claims.get('sub') or claims.get('cognito:username')
-        
-        if not actor_id:
+        # Retrieve session info from connections table
+        if not connections_table:
             raise AgentError(
-                code=ErrorCode.UNAUTHORIZED,
-                message="Unable to identify user. Authentication required.",
-                status_code=401
+                code=ErrorCode.INTERNAL_ERROR,
+                message="Connections table not configured",
+                status_code=500
             )
         
-        # Generate session_id if not provided
-        if not session_id:
-            import uuid
-            session_id = f"session-{uuid.uuid4()}"
+        try:
+            response = connections_table.get_item(
+                Key={'connectionId': connection_id}
+            )
+            
+            if 'Item' not in response:
+                raise AgentError(
+                    code=ErrorCode.SESSION_EXPIRED,
+                    message="Connection not found. Please reconnect.",
+                    status_code=401,
+                    details={"connectionId": connection_id}
+                )
+            
+            connection_item = response['Item']
+            session_id = connection_item.get('sessionId')
+            actor_id = connection_item.get('actorId')
+            
+            if not session_id or not actor_id:
+                raise AgentError(
+                    code=ErrorCode.INTERNAL_ERROR,
+                    message="Invalid connection data",
+                    status_code=500,
+                    details={"connectionId": connection_id}
+                )
+            
+        except ClientError as e:
+            logger.error("Failed to retrieve connection info", extra={
+                "connectionId": connection_id,
+                "error": str(e)
+            })
+            raise AgentError(
+                code=ErrorCode.DATABASE_ERROR,
+                message="Failed to retrieve session information",
+                status_code=500,
+                details={"error": str(e)}
+            )
         
         logger.info("Request validated", extra={
             "session_id": session_id,
             "actor_id": actor_id,
-            "message_length": len(message)
+            "message_length": len(message),
+            "connection_id": connection_id
         })
         
         return {
             "message": message.strip(),
             "session_id": session_id,
-            "actor_id": actor_id
+            "actor_id": actor_id,
+            "connection_id": connection_id
         }
         
     except json.JSONDecodeError as e:
@@ -457,58 +647,51 @@ def handle_agent_processing(
 @metrics.log_metrics(capture_cold_start_metric=True)
 def handler(event: Dict[str, Any], context: LambdaContext) -> Dict[str, Any]:
     """
-    Main Lambda handler for Admin Insights Agent.
+    Lambda handler for WebSocket sendMessage route.
     
     This handler processes admin queries through the Bedrock AgentCore agent
-    with comprehensive error handling, retry logic, and observability.
+    and streams responses back via WebSocket. It is invoked when a client sends
+    a message through an established WebSocket connection.
     
-    Request Format:
+    Prerequisites:
+    - Connection must be established via websocket_connect handler
+    - Connection info must exist in connections DynamoDB table
+    - Session must be initialized
+    
+    WebSocket Event Format:
     {
+        "requestContext": {
+            "connectionId": str,
+            "routeKey": "sendMessage",
+            "domainName": str,
+            "stage": str
+        },
         "body": {
-            "message": str (required),
-            "sessionId": str (optional),
-            "actorId": str (optional, extracted from auth context if not provided)
+            "action": "sendMessage",
+            "message": str
         }
     }
     
-    Response Format (Success):
-    {
-        "statusCode": 200,
-        "body": {
-            "response": str,
-            "session_id": str,
-            "timestamp": int,
-            "metadata": {
-                "actor_id": str,
-                "tools_invoked": List[str],
-                "tools_count": int
-            }
-        }
-    }
+    Response Format (streamed to WebSocket):
+    Multiple messages sent via ApiGatewayManagementApi:
+    {"type": "chunk", "content": str, "timestamp": int}
+    {"type": "chunk", "content": str, "timestamp": int}
+    ...
+    {"type": "complete", "content": "", "timestamp": int}
     
-    Response Format (Error):
-    {
-        "statusCode": 4xx | 5xx,
-        "body": {
-            "error": {
-                "code": str,
-                "message": str,
-                "timestamp": int,
-                "requestId": str,
-                "details": dict
-            }
-        }
-    }
+    Or on error:
+    {"type": "error", "content": str, "timestamp": int}
     
     Args:
-        event: Lambda event from API Gateway
+        event: Lambda event from WebSocket API Gateway
         context: Lambda context object
     
     Returns:
-        API Gateway response dictionary
+        API Gateway response (200 OK or error status)
     """
     request_id = context.request_id
     start_time = time.time()
+    connection_id = None
     
     try:
         # Add request ID to logger context
@@ -517,30 +700,35 @@ def handler(event: Dict[str, Any], context: LambdaContext) -> Dict[str, Any]:
         # Emit invocation metric
         metrics.add_metric(name="AgentInvocations", unit=MetricUnit.Count, value=1)
         
-        # Handle OPTIONS request for CORS
-        if event.get('httpMethod') == 'OPTIONS':
-            return {
-                "statusCode": 200,
-                "headers": {
-                    "Access-Control-Allow-Origin": "*",
-                    "Access-Control-Allow-Headers": "Content-Type,Authorization",
-                    "Access-Control-Allow-Methods": "POST,OPTIONS"
-                },
-                "body": ""
-            }
-        
-        # Validate request
-        logger.info("Validating request")
+        # Validate request and extract parameters
+        logger.info("Validating WebSocket request")
         validated_params = validate_request(event)
         
         message = validated_params["message"]
         session_id = validated_params["session_id"]
         actor_id = validated_params["actor_id"]
+        connection_id = validated_params["connection_id"]
+        
+        # Get WebSocket endpoint URL
+        request_context = event.get('requestContext', {})
+        domain_name = request_context.get('domainName')
+        stage = request_context.get('stage')
+        
+        if not domain_name or not stage:
+            logger.error("Missing WebSocket endpoint information")
+            raise AgentError(
+                code=ErrorCode.INTERNAL_ERROR,
+                message="WebSocket configuration error",
+                status_code=500
+            )
+        
+        endpoint_url = f"https://{domain_name}/{stage}"
         
         # Process message through agent
         logger.info("Processing agent request", extra={
             "session_id": session_id,
-            "actor_id": actor_id
+            "actor_id": actor_id,
+            "connection_id": connection_id
         })
         
         processing_result = handle_agent_processing(
@@ -549,11 +737,24 @@ def handler(event: Dict[str, Any], context: LambdaContext) -> Dict[str, Any]:
             actor_id=actor_id
         )
         
-        # Format response
-        response_body = format_response(
-            processing_result=processing_result,
-            include_metadata=True
+        # Stream response to WebSocket
+        response_text = processing_result.get("response", "")
+        
+        # Send response as single message (can be enhanced for true streaming later)
+        success = send_websocket_message(
+            connection_id=connection_id,
+            message_type="chunk",
+            content=response_text,
+            endpoint_url=endpoint_url
         )
+        
+        if success:
+            send_websocket_message(
+                connection_id=connection_id,
+                message_type="complete",
+                content="",
+                endpoint_url=endpoint_url
+            )
         
         # Calculate and emit latency metric
         latency_ms = (time.time() - start_time) * 1000
@@ -566,21 +767,17 @@ def handler(event: Dict[str, Any], context: LambdaContext) -> Dict[str, Any]:
             for tool_name in tools_invoked:
                 metrics.add_metric(name=f"Tool_{tool_name}_Invocations", unit=MetricUnit.Count, value=1)
         
-        logger.info("Request processed successfully", extra={
+        logger.info("WebSocket response sent", extra={
             "session_id": session_id,
+            "connection_id": connection_id,
             "latency_ms": latency_ms,
             "tools_invoked": tools_invoked
         })
         
+        # Return success to API Gateway
         return {
             "statusCode": 200,
-            "headers": {
-                "Content-Type": "application/json",
-                "Access-Control-Allow-Origin": "*",
-                "Access-Control-Allow-Headers": "Content-Type,Authorization",
-                "Access-Control-Allow-Methods": "POST,OPTIONS"
-            },
-            "body": json.dumps(response_body)
+            "body": json.dumps({"message": "Response sent"})
         }
     
     except AgentError as e:
@@ -589,28 +786,77 @@ def handler(event: Dict[str, Any], context: LambdaContext) -> Dict[str, Any]:
             "error_code": e.code.value,
             "error_message": e.message,
             "status_code": e.status_code,
-            "details": e.details
+            "details": e.details,
+            "connection_id": connection_id
         })
         
         # Emit error metric
         metrics.add_metric(name=f"Error_{e.code.value}", unit=MetricUnit.Count, value=1)
         
-        return create_error_response(e, request_id)
+        # Send error message to WebSocket connection
+        if connection_id:
+            request_context = event.get('requestContext', {})
+            domain_name = request_context.get('domainName')
+            stage = request_context.get('stage')
+            
+            if domain_name and stage:
+                endpoint_url = f"https://{domain_name}/{stage}"
+                send_websocket_message(
+                    connection_id=connection_id,
+                    message_type="error",
+                    content=e.message,
+                    endpoint_url=endpoint_url
+                )
+        
+        # Return error status to API Gateway
+        return {
+            "statusCode": e.status_code,
+            "body": json.dumps({
+                "error": {
+                    "code": e.code.value,
+                    "message": e.message,
+                    "timestamp": int(datetime.now().timestamp()),
+                    "requestId": request_id
+                }
+            })
+        }
     
     except Exception as e:
         # Unexpected error
         logger.exception("Unexpected error in handler", extra={
             "error": str(e),
-            "error_type": type(e).__name__
+            "error_type": type(e).__name__,
+            "connection_id": connection_id
         })
         
         metrics.add_metric(name="UnhandledErrors", unit=MetricUnit.Count, value=1)
         
-        error = AgentError(
-            code=ErrorCode.INTERNAL_ERROR,
-            message="An unexpected error occurred. Please try again.",
-            status_code=500,
-            details={"error_type": type(e).__name__}
-        )
+        # Try to send error to WebSocket
+        if connection_id:
+            try:
+                request_context = event.get('requestContext', {})
+                domain_name = request_context.get('domainName')
+                stage = request_context.get('stage')
+                
+                if domain_name and stage:
+                    endpoint_url = f"https://{domain_name}/{stage}"
+                    send_websocket_message(
+                        connection_id=connection_id,
+                        message_type="error",
+                        content="An unexpected error occurred. Please try again.",
+                        endpoint_url=endpoint_url
+                    )
+            except:
+                pass
         
-        return create_error_response(error, request_id)
+        return {
+            "statusCode": 500,
+            "body": json.dumps({
+                "error": {
+                    "code": ErrorCode.INTERNAL_ERROR.value,
+                    "message": "An unexpected error occurred",
+                    "timestamp": int(datetime.now().timestamp()),
+                    "requestId": request_id
+                }
+            })
+        }

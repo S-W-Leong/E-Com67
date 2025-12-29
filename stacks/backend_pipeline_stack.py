@@ -133,7 +133,7 @@ class BackendPipelineStack(Stack):
                     # Install Python dependencies for CDK
                     "pip install -r requirements.txt",
                     # Install CDK CLI
-                    "npm install -g aws-cdk",
+                    "npm install -g aws-cdk@latest",
                 ],
                 commands=[
                     # Build Lambda layers
