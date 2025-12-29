@@ -147,10 +147,12 @@ else:
             app,
             "E-Com67-AdminInsightsStack",
             data_stack=data_stack,
+            compute_stack=compute_stack,  # Pass compute_stack to get layers directly
             env=env,
             description="E-Com67 Platform - Admin Insights Agent with Bedrock AgentCore"
         )
-        admin_insights_stack.add_dependency(data_stack)
+        # Dependency on compute_stack is implicit via the constructor parameter
+        admin_insights_stack.add_dependency(compute_stack)
 
     # Add dependencies to ensure proper deployment order
     compute_stack.add_dependency(data_stack)

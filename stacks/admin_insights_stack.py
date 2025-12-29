@@ -30,10 +30,11 @@ from constructs import Construct
 class AdminInsightsStack(Stack):
     """Admin Insights Agent stack with Bedrock AgentCore, guardrails, and analytics tools"""
 
-    def __init__(self, scope: Construct, construct_id: str, data_stack, **kwargs) -> None:
+    def __init__(self, scope: Construct, construct_id: str, data_stack, compute_stack=None, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
         
         self.data_stack = data_stack
+        self.compute_stack = compute_stack
         
         # Create Bedrock Guardrail for security
         self._create_guardrail()
@@ -254,23 +255,38 @@ class AdminInsightsStack(Stack):
         )
 
     def _create_lambda_layers(self):
-        """Reference Lambda layers from ComputeStack using CloudFormation imports"""
-        # Import layer ARNs from ComputeStack exports
-        # This ensures we always use the correct layer versions
-        self.powertools_layer = _lambda.LayerVersion.from_layer_version_arn(
-            self, "PowertoolsLayerRef",
-            layer_version_arn=Fn.import_value("E-Com67-PowertoolsLayerArn")
-        )
+        """
+        Reference Lambda layers from ComputeStack.
         
-        self.utils_layer = _lambda.LayerVersion.from_layer_version_arn(
-            self, "UtilsLayerRef",
-            layer_version_arn=Fn.import_value("E-Com67-UtilsLayerArn")
-        )
+        If compute_stack is provided, use direct CDK references (preferred).
+        This allows CDK to manage dependencies automatically and deploy both
+        stacks together when layer ARNs change.
         
-        self.strands_layer = _lambda.LayerVersion.from_layer_version_arn(
-            self, "StrandsLayerRef",
-            layer_version_arn=Fn.import_value("E-Com67-StrandsLayerArn")
-        )
+        Falls back to CloudFormation imports for backward compatibility.
+        """
+        if self.compute_stack:
+            # Use direct CDK references - preferred approach
+            # CDK will automatically handle deployment order and layer updates
+            self.powertools_layer = self.compute_stack.powertools_layer
+            self.utils_layer = self.compute_stack.utils_layer
+            self.strands_layer = self.compute_stack.strands_layer
+        else:
+            # Fallback: Import layer ARNs from ComputeStack exports
+            # This is used when stacks are deployed independently (e.g., in pipelines)
+            self.powertools_layer = _lambda.LayerVersion.from_layer_version_arn(
+                self, "PowertoolsLayerRef",
+                layer_version_arn=Fn.import_value("E-Com67-PowertoolsLayerArn")
+            )
+            
+            self.utils_layer = _lambda.LayerVersion.from_layer_version_arn(
+                self, "UtilsLayerRef",
+                layer_version_arn=Fn.import_value("E-Com67-UtilsLayerArn")
+            )
+            
+            self.strands_layer = _lambda.LayerVersion.from_layer_version_arn(
+                self, "StrandsLayerRef",
+                layer_version_arn=Fn.import_value("E-Com67-StrandsLayerArn")
+            )
 
     def _create_connections_table(self):
         """
