@@ -81,12 +81,16 @@ class BackendPipelineStack(Stack):
                             # This ensures asset hashes match the actual layer contents
                             "echo 'Building Lambda layers...'",
                             # Clean layer directories for deterministic builds
+                            # Note: utils layer is NOT cleaned because it contains only pure Python code
+                            # with no external dependencies - the source files are used directly
                             "rm -rf layers/powertools/python layers/stripe/python layers/opensearch/python layers/strands/python",
                             # Install layer dependencies with platform targeting for Lambda
                             "pip install -r layers/powertools/requirements.txt -t layers/powertools/python/ --no-cache-dir --platform manylinux2014_x86_64 --only-binary=:all: || pip install -r layers/powertools/requirements.txt -t layers/powertools/python/ --no-cache-dir",
                             "pip install -r layers/stripe/requirements.txt -t layers/stripe/python/ --no-cache-dir --platform manylinux2014_x86_64 --only-binary=:all: || pip install -r layers/stripe/requirements.txt -t layers/stripe/python/ --no-cache-dir",
                             "pip install -r layers/opensearch/requirements.txt -t layers/opensearch/python/ --no-cache-dir --platform manylinux2014_x86_64 --only-binary=:all: || pip install -r layers/opensearch/requirements.txt -t layers/opensearch/python/ --no-cache-dir",
                             "pip install -r layers/strands/requirements-minimal.txt -t layers/strands/python/ --no-cache-dir --platform manylinux2014_x86_64 --only-binary=:all: || pip install -r layers/strands/requirements-minimal.txt -t layers/strands/python/ --no-cache-dir",
+                            # Utils layer has no external dependencies - just ensure the structure is correct
+                            "echo 'Utils layer already contains pure Python code - no build needed'",
                             # Clean non-deterministic files that cause hash mismatches
                             "find layers/*/python -name '*.pyc' -delete 2>/dev/null || true",
                             "find layers/*/python -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null || true",
