@@ -40,9 +40,11 @@ class BackendDeploymentStage(Stage):
         super().__init__(scope, construct_id, **kwargs)
 
         # Data layer - DynamoDB tables, Cognito, OpenSearch, S3
+        # Use explicit stack_name to match existing manually-deployed stacks
         data_stack = DataStack(
             self,
             "E-Com67-DataStack",
+            stack_name="E-Com67-DataStack",  # Override nested naming
             description="E-Com67 Platform - Data layer with DynamoDB tables and Cognito User Pool"
         )
 
@@ -50,6 +52,7 @@ class BackendDeploymentStage(Stage):
         compute_stack = ComputeStack(
             self,
             "E-Com67-ComputeStack",
+            stack_name="E-Com67-ComputeStack",  # Override nested naming
             data_stack=data_stack,
             description="E-Com67 Platform - Compute layer with Lambda functions and layers"
         )
@@ -58,6 +61,7 @@ class BackendDeploymentStage(Stage):
         api_stack = ApiStack(
             self,
             "E-Com67-ApiStack",
+            stack_name="E-Com67-ApiStack",  # Override nested naming
             data_stack=data_stack,
             compute_stack=compute_stack,
             description="E-Com67 Platform - API Gateway with REST endpoints and Cognito authorization"
