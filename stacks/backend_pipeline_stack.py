@@ -142,9 +142,6 @@ class BackendPipelineStack(Stack):
                     # Powertools layer
                     "pip install -r layers/powertools/requirements.txt -t layers/powertools/python/ --upgrade",
 
-                    # Utils layer
-                    "pip install -r layers/utils/requirements.txt -t layers/utils/python/ --upgrade",
-
                     # Stripe layer
                     "pip install -r layers/stripe/requirements.txt -t layers/stripe/python/ --upgrade",
 
@@ -156,6 +153,8 @@ class BackendPipelineStack(Stack):
                     "pip install -r layers/strands/requirements-minimal.txt -t layers/strands/python/ --upgrade",
                     "find layers/strands/python -name '*.pyc' -delete",
                     "find layers/strands/python -name '__pycache__' -type d -exec rm -rf {} + || true",
+
+                    # Note: Utils layer contains only custom Python code, no external dependencies
 
                     # Synthesize CDK
                     "echo 'Synthesizing CDK...'",
