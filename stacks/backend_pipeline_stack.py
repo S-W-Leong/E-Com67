@@ -143,20 +143,30 @@ class BackendPipelineStack(Stack):
                     # Build Lambda layers
                     "echo 'Building Lambda layers...'",
 
+                    # Clean all layer python directories first to ensure deterministic builds
+                    # This prevents stale files from causing asset hash mismatches
+                    "echo 'Cleaning layer directories...'",
+                    "rm -rf layers/powertools/python layers/stripe/python layers/opensearch/python layers/strands/python",
+
                     # Powertools layer
-                    "pip install -r layers/powertools/requirements.txt -t layers/powertools/python/ --upgrade",
+                    "pip install -r layers/powertools/requirements.txt -t layers/powertools/python/ --no-cache-dir",
 
                     # Stripe layer
-                    "pip install -r layers/stripe/requirements.txt -t layers/stripe/python/ --upgrade",
+                    "pip install -r layers/stripe/requirements.txt -t layers/stripe/python/ --no-cache-dir",
 
                     # OpenSearch layer
-                    "pip install -r layers/opensearch/requirements.txt -t layers/opensearch/python/ --upgrade",
+                    "pip install -r layers/opensearch/requirements.txt -t layers/opensearch/python/ --no-cache-dir",
 
                     # Strands layer (standard pip install - architecture-agnostic)
                     "echo 'Building Strands layer...'",
-                    "pip install -r layers/strands/requirements-minimal.txt -t layers/strands/python/ --upgrade",
-                    "find layers/strands/python -name '*.pyc' -delete",
-                    "find layers/strands/python -name '__pycache__' -type d -exec rm -rf {} + || true",
+                    "pip install -r layers/strands/requirements-minimal.txt -t layers/strands/python/ --no-cache-dir",
+
+                    # Clean up non-deterministic files from all layers (bytecode, cache, dist-info metadata)
+                    "echo 'Cleaning non-deterministic files from layers...'",
+                    "find layers/*/python -name '*.pyc' -delete 2>/dev/null || true",
+                    "find layers/*/python -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null || true",
+                    "find layers/*/python -name '*.dist-info' -type d -exec rm -rf {} + 2>/dev/null || true",
+                    "find layers/*/python -name 'RECORD' -delete 2>/dev/null || true",
 
                     # Note: Utils layer contains only custom Python code, no external dependencies
 
