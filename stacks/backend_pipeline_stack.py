@@ -99,9 +99,11 @@ class BackendPipelineStack(Stack):
                     "build": {
                         "commands": [
                             "echo 'Deploying backend stacks...'",
-                            # Deploy stacks in order: Data -> Compute -> Api
+                            # Deploy stacks in order: Data -> Compute -> AdminInsights -> Api
+                            # AdminInsightsStack must be deployed with ComputeStack because it
+                            # imports layer ARNs. If layers change, both stacks must update together.
                             "cdk deploy E-Com67-DataStack --require-approval never",
-                            "cdk deploy E-Com67-ComputeStack --require-approval never",
+                            "cdk deploy E-Com67-ComputeStack E-Com67-AdminInsightsStack --require-approval never",
                             "cdk deploy E-Com67-ApiStack --require-approval never",
                         ]
                     }
