@@ -256,37 +256,25 @@ class AdminInsightsStack(Stack):
 
     def _create_lambda_layers(self):
         """
-        Reference Lambda layers from ComputeStack.
+        Reference Lambda layers from ComputeStack via direct CDK references.
         
-        If compute_stack is provided, use direct CDK references (preferred).
-        This allows CDK to manage dependencies automatically and deploy both
-        stacks together when layer ARNs change.
+        This approach eliminates CloudFormation cross-stack exports, which cause
+        deployment failures when layer ARNs change. CDK manages the dependency
+        automatically and deploys both stacks together when needed.
         
-        Falls back to CloudFormation imports for backward compatibility.
+        IMPORTANT: compute_stack is a required parameter. The Fn.import_value
+        fallback has been removed to prevent cross-stack export issues.
         """
-        if self.compute_stack:
-            # Use direct CDK references - preferred approach
-            # CDK will automatically handle deployment order and layer updates
-            self.powertools_layer = self.compute_stack.powertools_layer
-            self.utils_layer = self.compute_stack.utils_layer
-            self.strands_layer = self.compute_stack.strands_layer
-        else:
-            # Fallback: Import layer ARNs from ComputeStack exports
-            # This is used when stacks are deployed independently (e.g., in pipelines)
-            self.powertools_layer = _lambda.LayerVersion.from_layer_version_arn(
-                self, "PowertoolsLayerRef",
-                layer_version_arn=Fn.import_value("E-Com67-PowertoolsLayerArn")
+        if not self.compute_stack:
+            raise ValueError(
+                "compute_stack is required for AdminInsightsStack. "
+                "Pass compute_stack when instantiating this stack to get layers directly."
             )
-            
-            self.utils_layer = _lambda.LayerVersion.from_layer_version_arn(
-                self, "UtilsLayerRef",
-                layer_version_arn=Fn.import_value("E-Com67-UtilsLayerArn")
-            )
-            
-            self.strands_layer = _lambda.LayerVersion.from_layer_version_arn(
-                self, "StrandsLayerRef",
-                layer_version_arn=Fn.import_value("E-Com67-StrandsLayerArn")
-            )
+        
+        # Use direct CDK references - this is the only supported approach
+        self.powertools_layer = self.compute_stack.powertools_layer
+        self.utils_layer = self.compute_stack.utils_layer
+        self.strands_layer = self.compute_stack.strands_layer
 
     def _create_connections_table(self):
         """
