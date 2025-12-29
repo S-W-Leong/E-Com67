@@ -41,8 +41,11 @@ dist-ssr
 .env.local
 .env.production
 
-# Lambda layer dependencies
-layers/*/python/
+# Lambda layer dependencies (but not utils layer which contains source code)
+layers/powertools/python/
+layers/stripe/python/
+layers/opensearch/python/
+layers/strands/python/
 layers/*/nodejs/
 
 # Keep package-lock.json for frontend applications
