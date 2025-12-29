@@ -42,6 +42,9 @@ class AdminInsightsStack(Stack):
         # Create analytics tool Lambda functions
         self._create_analytics_tool_lambdas()
         
+        # Create agent Lambda function
+        self._create_agent_lambda()
+        
         # Create cross-stack exports
         self._create_exports()
 
@@ -237,17 +240,22 @@ class AdminInsightsStack(Stack):
         )
 
     def _create_lambda_layers(self):
-        """Reference Lambda layers from ComputeStack"""
-        # Reference existing layers by ARN pattern
-        # These layers are created in ComputeStack and we reference them here
+        """Reference Lambda layers from ComputeStack using CloudFormation imports"""
+        # Import layer ARNs from ComputeStack exports
+        # This ensures we always use the correct layer versions
         self.powertools_layer = _lambda.LayerVersion.from_layer_version_arn(
             self, "PowertoolsLayerRef",
-            layer_version_arn=f"arn:aws:lambda:{self.region}:{self.account}:layer:e-com67-powertools:1"
+            layer_version_arn=Fn.import_value("E-Com67-PowertoolsLayerArn")
         )
         
         self.utils_layer = _lambda.LayerVersion.from_layer_version_arn(
             self, "UtilsLayerRef",
-            layer_version_arn=f"arn:aws:lambda:{self.region}:{self.account}:layer:e-com67-utils:1"
+            layer_version_arn=Fn.import_value("E-Com67-UtilsLayerArn")
+        )
+        
+        self.strands_layer = _lambda.LayerVersion.from_layer_version_arn(
+            self, "StrandsLayerRef",
+            layer_version_arn=Fn.import_value("E-Com67-StrandsLayerArn")
         )
 
     def _create_analytics_tool_lambdas(self):
@@ -379,3 +387,71 @@ class AdminInsightsStack(Stack):
             export_name="E-Com67-AdminInsightsProductSearchLambdaArn",
             description="Product Search Analytics Tool Lambda ARN"
         )
+        
+        CfnOutput(
+            self, "AgentLambdaArn",
+            value=self.agent_lambda.function_arn,
+            export_name="E-Com67-AdminInsightsAgentLambdaArn",
+            description="Admin Insights Agent Lambda ARN"
+        )
+
+    def _create_agent_lambda(self):
+        """
+        Create Lambda function for Admin Insights Agent runtime.
+        
+        This Lambda function orchestrates the agent conversation flow:
+        - Initializes Bedrock AgentCore with Strands SDK
+        - Manages session-based memory for contextual conversations
+        - Invokes analytics tools based on user queries
+        - Applies guardrails to inputs and outputs
+        - Formats and returns responses
+        
+        Prerequisites:
+        - Run scripts/create_admin_insights_memory.py to create memory and get MEMORY_ID
+        - Update the MEMORY_ID environment variable below with the actual value
+        
+        Environment Variables:
+        - MEMORY_ID: AgentCore Memory ID (obtained from scripts/create_admin_insights_memory.py)
+        - GUARDRAIL_ID: Bedrock Guardrail ID (from self.guardrail.attr_guardrail_id)
+        - MODEL_ID: Bedrock model identifier (e.g., "amazon.nova-pro-v1:0")
+        - ORDER_TRENDS_LAMBDA_ARN: ARN of order trends tool Lambda
+        - SALES_INSIGHTS_LAMBDA_ARN: ARN of sales insights tool Lambda
+        - PRODUCT_SEARCH_LAMBDA_ARN: ARN of product search tool Lambda
+        - REGION: AWS region
+        """
+        
+        # Note: MEMORY_ID must be set after running scripts/create_admin_insights_memory.py
+        # The placeholder value will cause runtime errors until replaced with actual memory ID
+        memory_id = "AdminInsightsAgentMemory-Sd77nY40tq"  
+        
+        self.agent_lambda = _lambda.Function(
+            self, "AdminInsightsAgentLambda",
+            function_name="e-com67-admin-insights-agent",
+            runtime=_lambda.Runtime.PYTHON_3_12,
+            handler="handler.handler",
+            code=_lambda.Code.from_asset("lambda/admin_insights_agent"),
+            role=self.agent_execution_role,
+            timeout=Duration.seconds(30),
+            memory_size=512,
+            environment={
+                "MEMORY_ID": memory_id,
+                "GUARDRAIL_ID": self.guardrail.attr_guardrail_id,
+                "MODEL_ID": "amazon.nova-pro-v1:0",
+                "ORDER_TRENDS_LAMBDA_ARN": self.order_trends_lambda.function_arn,
+                "SALES_INSIGHTS_LAMBDA_ARN": self.sales_insights_lambda.function_arn,
+                "PRODUCT_SEARCH_LAMBDA_ARN": self.product_search_lambda.function_arn,
+                "REGION": self.region,
+                "POWERTOOLS_SERVICE_NAME": "admin-insights-agent",
+                "LOG_LEVEL": "INFO"
+            },
+            layers=[self.powertools_layer, self.utils_layer, self.strands_layer],
+            description="Admin Insights Agent runtime with Bedrock AgentCore and Strands SDK",
+            tracing=_lambda.Tracing.ACTIVE
+        )
+        
+        # Grant invoke permissions for tool Lambdas
+        # This allows the agent to call analytics tools during conversation
+        self.order_trends_lambda.grant_invoke(self.agent_lambda)
+        self.sales_insights_lambda.grant_invoke(self.agent_lambda)
+        self.product_search_lambda.grant_invoke(self.agent_lambda)
+

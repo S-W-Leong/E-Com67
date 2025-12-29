@@ -20,6 +20,7 @@ from aws_cdk import (
     aws_s3 as s3,
     aws_cloudfront as cloudfront,
     aws_iam as iam,
+    aws_ssm as ssm,
     CfnOutput,
 )
 from constructs import Construct
@@ -101,6 +102,15 @@ class AdminPipelineStack(Stack):
                     },
                     "build": {
                         "commands": [
+                            "echo 'Setting up environment variables from SSM Parameter Store...'",
+                            "export VITE_STRIPE_PUBLISHABLE_KEY=$(aws ssm get-parameter --name /ecom67/stripe/publishable-key --query 'Parameter.Value' --output text --region $AWS_REGION)",
+                            "export VITE_AWS_REGION=$AWS_REGION",
+                            "export VITE_USER_POOL_ID=$(aws ssm get-parameter --name /ecom67/cognito/user-pool-id --query 'Parameter.Value' --output text --region $AWS_REGION)",
+                            "export VITE_USER_POOL_CLIENT_ID=$(aws ssm get-parameter --name /ecom67/cognito/user-pool-client-id --query 'Parameter.Value' --output text --region $AWS_REGION)",
+                            "export VITE_API_ENDPOINT=$(aws ssm get-parameter --name /ecom67/api/base-url --query 'Parameter.Value' --output text --region $AWS_REGION)",
+                            "export VITE_WEBSOCKET_URL=$(aws ssm get-parameter --name /ecom67/api/websocket-url --query 'Parameter.Value' --output text --region $AWS_REGION)",
+                            "export VITE_ENV=production",
+                            "echo 'Environment variables configured'",
                             "echo 'Building React application...'",
                             "npm run build",
                         ]
@@ -124,6 +134,16 @@ class AdminPipelineStack(Stack):
                 codebuild.LocalCacheMode.SOURCE,
                 codebuild.LocalCacheMode.CUSTOM
             ),
+        )
+
+        # Grant SSM Parameter Store read permissions to build project
+        build_project.add_to_role_policy(
+            iam.PolicyStatement(
+                actions=["ssm:GetParameter", "ssm:GetParameters"],
+                resources=[
+                    f"arn:aws:ssm:{self.region}:{self.account}:parameter/ecom67/*"
+                ]
+            )
         )
 
         # Build action
