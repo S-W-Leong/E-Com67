@@ -77,7 +77,7 @@ class ComputeStack(Stack):
             self, "PowertoolsLayer",
             layer_version_name="e-com67-powertools",
             code=_lambda.Code.from_asset("layers/powertools"),
-            compatible_runtimes=[_lambda.Runtime.PYTHON_3_9, _lambda.Runtime.PYTHON_3_10],
+            compatible_runtimes=[_lambda.Runtime.PYTHON_3_9, _lambda.Runtime.PYTHON_3_10, _lambda.Runtime.PYTHON_3_12],
             compatible_architectures=[_lambda.Architecture.X86_64],
             description="AWS Lambda Powertools for structured logging and tracing",
             removal_policy=self.removal_policy
@@ -88,7 +88,7 @@ class ComputeStack(Stack):
             self, "UtilsLayer",
             layer_version_name="e-com67-utils",
             code=_lambda.Code.from_asset("layers/utils"),
-            compatible_runtimes=[_lambda.Runtime.PYTHON_3_9, _lambda.Runtime.PYTHON_3_10],
+            compatible_runtimes=[_lambda.Runtime.PYTHON_3_9, _lambda.Runtime.PYTHON_3_10, _lambda.Runtime.PYTHON_3_12],
             compatible_architectures=[_lambda.Architecture.X86_64],
             description="Common utilities and shared business logic",
             removal_policy=self.removal_policy
@@ -99,7 +99,7 @@ class ComputeStack(Stack):
             self, "StripeLayer",
             layer_version_name="e-com67-stripe",
             code=_lambda.Code.from_asset("layers/stripe"),
-            compatible_runtimes=[_lambda.Runtime.PYTHON_3_9, _lambda.Runtime.PYTHON_3_10],
+            compatible_runtimes=[_lambda.Runtime.PYTHON_3_9, _lambda.Runtime.PYTHON_3_10, _lambda.Runtime.PYTHON_3_12],
             compatible_architectures=[_lambda.Architecture.X86_64],
             description="Stripe SDK for payment processing integration",
             removal_policy=self.removal_policy
@@ -110,7 +110,7 @@ class ComputeStack(Stack):
             self, "OpenSearchLayer",
             layer_version_name="e-com67-opensearch",
             code=_lambda.Code.from_asset("layers/opensearch"),
-            compatible_runtimes=[_lambda.Runtime.PYTHON_3_9, _lambda.Runtime.PYTHON_3_10],
+            compatible_runtimes=[_lambda.Runtime.PYTHON_3_9, _lambda.Runtime.PYTHON_3_10, _lambda.Runtime.PYTHON_3_12],
             compatible_architectures=[_lambda.Architecture.X86_64],
             description="OpenSearch Python client for search functionality",
             removal_policy=self.removal_policy
@@ -122,7 +122,7 @@ class ComputeStack(Stack):
             self, "StrandsLayer",
             layer_version_name="e-com67-strands",
             code=_lambda.Code.from_asset("layers/strands"),
-            compatible_runtimes=[_lambda.Runtime.PYTHON_3_9, _lambda.Runtime.PYTHON_3_10],
+            compatible_runtimes=[_lambda.Runtime.PYTHON_3_9, _lambda.Runtime.PYTHON_3_10, _lambda.Runtime.PYTHON_3_12],
             compatible_architectures=[_lambda.Architecture.X86_64],
             description="Strands SDK v1.20.0 with Linux x86_64 binaries (Docker built)",
             removal_policy=self.removal_policy
