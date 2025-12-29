@@ -45,7 +45,8 @@ from agent import (
     initialize_agent,
     process_message,
     format_response,
-    apply_guardrails
+    apply_guardrails,
+    GuardrailViolationError
 )
 from session_manager import SessionManager
 
@@ -514,25 +515,39 @@ def handle_agent_processing(
         
         return result
         
-    except ValueError as e:
-        # Guardrail violations or validation errors (not retryable)
-        error_message = str(e)
+    except GuardrailViolationError as e:
+        # Guardrail violations (not retryable)
+        logger.warning("Guardrail violation detected", extra={
+            "session_id": session_id,
+            "violations": e.violations,
+            "source": e.source
+        })
         
-        if "cannot be processed" in error_message.lower():
-            metrics.add_metric(name="GuardrailBlocked", unit=MetricUnit.Count, value=1)
-            raise AgentError(
-                code=ErrorCode.CONTENT_BLOCKED,
-                message=error_message,
-                status_code=400,
-                retryable=False
-            )
-        else:
-            raise AgentError(
-                code=ErrorCode.INVALID_INPUT,
-                message=error_message,
-                status_code=400,
-                retryable=False
-            )
+        metrics.add_metric(name="GuardrailBlocked", unit=MetricUnit.Count, value=1)
+        
+        # Determine specific error code based on violation type
+        error_code = ErrorCode.CONTENT_BLOCKED
+        if any("PII" in v for v in e.violations):
+            error_code = ErrorCode.PII_DETECTED
+        elif any("attack" in v.lower() for v in e.violations):
+            error_code = ErrorCode.PROMPT_ATTACK_DETECTED
+        
+        raise AgentError(
+            code=error_code,
+            message=str(e),
+            status_code=400,
+            details={"violations": e.violations, "source": e.source},
+            retryable=False
+        )
+        
+    except ValueError as e:
+        # Other validation errors (not retryable)
+        raise AgentError(
+            code=ErrorCode.INVALID_INPUT,
+            message=str(e),
+            status_code=400,
+            retryable=False
+        )
     
     except ClientError as e:
         error_code = e.response.get('Error', {}).get('Code', '')

@@ -8,6 +8,7 @@ import {
   Menu,
   X
 } from 'lucide-react'
+import AdminInsightsWidget from './AdminInsightsWidget'
 
 const Layout = ({ children, signOut }) => {
   const location = useLocation()
@@ -117,6 +118,9 @@ const Layout = ({ children, signOut }) => {
           {children}
         </main>
       </div>
+
+      {/* Admin Insights Chat Widget - Always visible */}
+      <AdminInsightsWidget />
     </div>
   )
 }

@@ -14,6 +14,15 @@ Both applications connect to the same backend infrastructure but provide role-sp
 
 ## Features
 
+### Admin Insights Chat Widget
+- **AI-Powered Analytics**: Natural language queries for business insights
+- **Real-Time Streaming**: Live responses from the Admin Insights Agent
+- **Session Persistence**: Conversation context maintained across interactions
+- **Order Trends**: Analyze order volume, revenue, and status distribution
+- **Sales Insights**: Product performance, top sellers, and category analytics
+- **Product Search**: Semantic search across product catalog
+- **Always Available**: Floating chat button accessible from any page
+
 ### Product Management
 - View all products with filtering and search
 - Add new products with comprehensive form validation
@@ -69,6 +78,15 @@ VITE_AWS_REGION=ap-southeast-1
 VITE_USER_POOL_ID=your-user-pool-id
 VITE_USER_POOL_CLIENT_ID=your-user-pool-client-id
 VITE_API_ENDPOINT=https://your-api-id.execute-api.ap-southeast-1.amazonaws.com/prod
+VITE_ADMIN_INSIGHTS_WEBSOCKET_URL=wss://your-admin-insights-api-id.execute-api.ap-southeast-1.amazonaws.com/prod
+```
+
+**Admin Insights Configuration:**
+The `VITE_ADMIN_INSIGHTS_WEBSOCKET_URL` is the WebSocket endpoint for the Admin Insights Agent. 
+After deploying the AdminInsightsStack, get this value from the CDK output:
+```bash
+aws cloudformation describe-stacks --stack-name E-Com67-AdminInsightsStack \
+  --query 'Stacks[0].Outputs[?OutputKey==`WebSocketURL`].OutputValue' --output text
 ```
 
 3. Start the development server:

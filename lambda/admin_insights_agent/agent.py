@@ -498,6 +498,15 @@ def apply_guardrails(
         }
 
 
+class GuardrailViolationError(ValueError):
+    """Exception raised when content is blocked by guardrails"""
+    
+    def __init__(self, message: str, violations: List[str], source: str):
+        super().__init__(message)
+        self.violations = violations
+        self.source = source
+
+
 @tracer.capture_method
 def process_message(
     agent_config: Dict[str, Any],
@@ -525,7 +534,7 @@ def process_message(
         Dictionary with response and metadata
     
     Raises:
-        ValueError: If message is blocked by guardrails
+        GuardrailViolationError: If message is blocked by guardrails
         RuntimeError: If processing fails
     """
     logger.info("Processing message", extra={
@@ -542,9 +551,11 @@ def process_message(
             "session_id": session_id,
             "violations": input_guardrail_result["violations"]
         })
-        raise ValueError(
-            "Your request contains content that cannot be processed. "
-            "Please rephrase your question without sensitive information."
+        raise GuardrailViolationError(
+            message="Your request contains content that cannot be processed. "
+                    "Please rephrase your question without sensitive information.",
+            violations=input_guardrail_result["violations"],
+            source="INPUT"
         )
     
     # Step 2: Invoke agent
