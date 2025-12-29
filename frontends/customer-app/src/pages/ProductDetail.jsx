@@ -3,6 +3,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom'
 import { Star, ShoppingCart, ArrowLeft, AlertCircle, Plus, Minus, Check } from 'lucide-react'
 import { productApi, cartApi } from '../services/api'
 import { fetchAuthSession } from 'aws-amplify/auth'
+import { metaPixel } from '../services/metaPixel'
 
 /**
  * ProductDetail Page
@@ -32,6 +33,9 @@ const ProductDetail = () => {
 
         const data = await productApi.getProduct(id)
         setProduct(data)
+
+        // Track Meta Pixel ViewContent event
+        metaPixel.trackViewContent(data)
 
         // Fetch related products (same category)
         if (data.category) {
@@ -71,6 +75,9 @@ const ProductDetail = () => {
 
       await cartApi.addToCart(product.productId, quantity)
 
+      // Track Meta Pixel AddToCart event
+      metaPixel.trackAddToCart(product, quantity)
+
       setAddedToCart(true)
       setTimeout(() => setAddedToCart(false), 3000)
     } catch (error) {
@@ -95,6 +102,9 @@ const ProductDetail = () => {
 
       await fetchAuthSession()
       await cartApi.addToCart(product.productId, quantity)
+
+      // Track Meta Pixel AddToCart event (for Buy Now)
+      metaPixel.trackAddToCart(product, quantity)
 
       navigate('/cart')
     } catch (error) {

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { useParams, useNavigate, useLocation, Link } from 'react-router-dom'
 import { Package, ChevronRight, AlertCircle, CheckCircle, Clock, Truck, ArrowLeft } from 'lucide-react'
 import { orderApi } from '../services/api'
+import { metaPixel } from '../services/metaPixel'
 
 /**
  * Get status badge styling and icon
@@ -243,6 +244,7 @@ const OrderDetail = ({ orderId: propOrderId }) => {
 const Orders = () => {
   const { id } = useParams()
   const navigate = useNavigate()
+  const location = useLocation()
 
   const [orders, setOrders] = useState([])
   const [loading, setLoading] = useState(true)
@@ -250,6 +252,7 @@ const Orders = () => {
   const [hasMore, setHasMore] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
   const [lastKey, setLastKey] = useState(null)
+  const [purchaseTracked, setPurchaseTracked] = useState(false)
 
   // If there's an ID in the URL, show detail view
   if (id) {
@@ -288,6 +291,13 @@ const Orders = () => {
         setOrders(prev => [...prev, ...newOrders])
       } else {
         setOrders(newOrders)
+
+        // Track Meta Pixel Purchase event if coming from checkout
+        if (location.state?.fromCheckout && newOrders.length > 0 && !purchaseTracked) {
+          const mostRecentOrder = newOrders[0]
+          metaPixel.trackPurchase(mostRecentOrder)
+          setPurchaseTracked(true)
+        }
       }
 
       setLastKey(response.lastKey)

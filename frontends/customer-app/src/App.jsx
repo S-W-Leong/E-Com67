@@ -1,9 +1,10 @@
-import React from 'react'
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom'
+import React, { useEffect } from 'react'
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { Authenticator, useAuthenticator } from '@aws-amplify/ui-react'
 import '@aws-amplify/ui-react/styles.css'
 
 import { CartProvider } from './context/CartContext'
+import { metaPixel } from './services/metaPixel'
 import Layout from './components/Layout'
 import Home from './pages/Home'
 import Products from './pages/Products'
@@ -24,11 +25,28 @@ function ProtectedRoute({ children }) {
   return children
 }
 
+// Component to track page views on route changes
+function PageViewTracker() {
+  const location = useLocation()
+
+  useEffect(() => {
+    metaPixel.trackPageView()
+  }, [location.pathname])
+
+  return null
+}
+
 function App() {
+  // Initialize Meta Pixel on app mount
+  useEffect(() => {
+    metaPixel.init()
+  }, [])
+
   return (
     <Authenticator.Provider>
       <CartProvider>
         <Router>
+          <PageViewTracker />
           <div className="min-h-screen bg-gray-50">
             <Routes>
             {/* Public routes */}

@@ -360,9 +360,36 @@ def validate_request(event: Dict[str, Any]) -> Dict[str, Any]:
             )
         
         # Parse body
-        body = event.get('body', {})
+        body = event.get('body')
+        
+        # Log the raw body for debugging
+        logger.debug("Raw body from event", extra={
+            "body": body,
+            "body_type": type(body).__name__,
+            "full_event": event
+        })
+        
+        if not body:
+            raise AgentError(
+                code=ErrorCode.MALFORMED_REQUEST,
+                message="Missing request body",
+                status_code=400
+            )
+        
         if isinstance(body, str):
-            body = json.loads(body)
+            try:
+                body = json.loads(body)
+            except json.JSONDecodeError as e:
+                logger.error("Failed to parse body JSON", extra={
+                    "body": body,
+                    "error": str(e)
+                })
+                raise AgentError(
+                    code=ErrorCode.MALFORMED_REQUEST,
+                    message="Invalid JSON in request body",
+                    status_code=400,
+                    details={"error": str(e)}
+                )
         
         # Extract message
         message = body.get('message')
@@ -704,13 +731,27 @@ def handler(event: Dict[str, Any], context: LambdaContext) -> Dict[str, Any]:
     Returns:
         API Gateway response (200 OK or error status)
     """
-    request_id = context.request_id
+    request_id = context.aws_request_id
     start_time = time.time()
     connection_id = None
     
     try:
         # Add request ID to logger context
         logger.append_keys(request_id=request_id)
+        
+        # Handle heartbeat/ping messages
+        body = event.get('body')
+        if body:
+            try:
+                body_data = json.loads(body) if isinstance(body, str) else body
+                if body_data.get('action') == 'ping':
+                    # Respond to ping with pong
+                    return {
+                        "statusCode": 200,
+                        "body": json.dumps({"message": "pong"})
+                    }
+            except:
+                pass  # Continue with normal processing if parsing fails
         
         # Emit invocation metric
         metrics.add_metric(name="AgentInvocations", unit=MetricUnit.Count, value=1)

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { Search, X, TrendingUp } from 'lucide-react'
 import { productApi } from '../services/api'
+import { metaPixel } from '../services/metaPixel'
 
 /**
  * SearchBar Component
@@ -85,6 +86,9 @@ const SearchBar = ({ onSearch, placeholder = 'Search products...', initialValue 
     const updated = [searchQuery, ...recentSearches.filter(s => s !== searchQuery)].slice(0, 5)
     setRecentSearches(updated)
     localStorage.setItem('recentSearches', JSON.stringify(updated))
+
+    // Track Meta Pixel Search event
+    metaPixel.trackSearch(searchQuery)
 
     // Close suggestions and perform search
     setShowSuggestions(false)

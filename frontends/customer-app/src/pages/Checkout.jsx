@@ -5,6 +5,7 @@ import { AlertCircle, ArrowLeft } from 'lucide-react'
 import { loadStripe } from '@stripe/stripe-js'
 import { Elements } from '@stripe/react-stripe-js'
 import { cartApi, orderApi } from '../services/api'
+import { metaPixel } from '../services/metaPixel'
 import PaymentForm from '../components/PaymentForm'
 
 // Initialize Stripe
@@ -60,6 +61,9 @@ const Checkout = () => {
       }
 
       setCart(data)
+
+      // Track Meta Pixel InitiateCheckout event
+      metaPixel.trackInitiateCheckout(data)
     } catch (err) {
       console.error('Error fetching cart:', err)
       setError('Failed to load cart. Please try again.')
