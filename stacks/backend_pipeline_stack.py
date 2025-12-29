@@ -77,21 +77,23 @@ class BackendPipelineStack(Stack):
                             "echo 'Installing dependencies...'",
                             "pip install -r requirements.txt",
                             "npm install -g aws-cdk@latest",
-                        ]
-                    },
-                    "pre_build": {
-                        "commands": [
+                            # Build Lambda layers BEFORE CDK synth runs
+                            # This ensures asset hashes match the actual layer contents
                             "echo 'Building Lambda layers...'",
                             # Clean layer directories for deterministic builds
                             "rm -rf layers/powertools/python layers/stripe/python layers/opensearch/python layers/strands/python",
-                            # Install layer dependencies
-                            "pip install -r layers/powertools/requirements.txt -t layers/powertools/python/ --no-cache-dir",
-                            "pip install -r layers/stripe/requirements.txt -t layers/stripe/python/ --no-cache-dir",
-                            "pip install -r layers/opensearch/requirements.txt -t layers/opensearch/python/ --no-cache-dir",
-                            "pip install -r layers/strands/requirements-minimal.txt -t layers/strands/python/ --no-cache-dir",
-                            # Clean non-deterministic files
+                            # Install layer dependencies with platform targeting for Lambda
+                            "pip install -r layers/powertools/requirements.txt -t layers/powertools/python/ --no-cache-dir --platform manylinux2014_x86_64 --only-binary=:all: || pip install -r layers/powertools/requirements.txt -t layers/powertools/python/ --no-cache-dir",
+                            "pip install -r layers/stripe/requirements.txt -t layers/stripe/python/ --no-cache-dir --platform manylinux2014_x86_64 --only-binary=:all: || pip install -r layers/stripe/requirements.txt -t layers/stripe/python/ --no-cache-dir",
+                            "pip install -r layers/opensearch/requirements.txt -t layers/opensearch/python/ --no-cache-dir --platform manylinux2014_x86_64 --only-binary=:all: || pip install -r layers/opensearch/requirements.txt -t layers/opensearch/python/ --no-cache-dir",
+                            "pip install -r layers/strands/requirements-minimal.txt -t layers/strands/python/ --no-cache-dir --platform manylinux2014_x86_64 --only-binary=:all: || pip install -r layers/strands/requirements-minimal.txt -t layers/strands/python/ --no-cache-dir",
+                            # Clean non-deterministic files that cause hash mismatches
                             "find layers/*/python -name '*.pyc' -delete 2>/dev/null || true",
                             "find layers/*/python -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null || true",
+                            "find layers/*/python -name '*.dist-info' -type d -exec rm -rf {} + 2>/dev/null || true",
+                            "find layers/*/python -name '*.egg-info' -type d -exec rm -rf {} + 2>/dev/null || true",
+                            # Show layer sizes to debug size limit issues
+                            "echo 'Layer sizes:' && du -sh layers/*/python || true",
                         ]
                     },
                     "build": {
