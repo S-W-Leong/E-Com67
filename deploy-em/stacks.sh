@@ -32,7 +32,7 @@ echo "Deploying Frontend Stack..."
 cdk deploy E-Com67-FrontendStack --require-approval never
 
 echo "Deploying Backend Pipeline Stack..."
-USE_BACKEND_PIPELINE=true cdk deploy E-Com67-BackendPipelineStack 
+USE_BACKEND_PIPELINE=true cdk deploy E-Com67-BackendPipelineStack --require-approval never
 
 echo "Deploying Frontend Pipeline Stacks (Admin & Customer)..."
 USE_FRONTEND_PIPELINES=true cdk deploy E-Com67-AdminPipelineStack E-Com67-CustomerPipelineStack --require-approval never
