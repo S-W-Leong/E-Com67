@@ -6,7 +6,7 @@ platform's OpenSearch infrastructure and provide intelligent recommendations.
 """
 
 # CRITICAL: Apply OpenTelemetry fix BEFORE any other imports
-import otel_emergency_fix  # Embedded fix that doesn't depend on layers
+import otel_fix  # Stubs out OpenTelemetry - we use Powertools for tracing
 
 import json
 import os

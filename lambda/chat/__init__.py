@@ -6,8 +6,8 @@ response formatters, and validation utilities for the E-Com67 platform.
 """
 
 # CRITICAL: Apply OpenTelemetry fix BEFORE any other imports
-# This embedded fix doesn't depend on layers and is always available
-import otel_emergency_fix
+# Stubs out OpenTelemetry since we use Powertools for tracing
+import otel_fix
 
 # Import main models for easy access
 from .models import (

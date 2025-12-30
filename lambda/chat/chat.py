@@ -8,7 +8,7 @@ cart management, and order tracking through custom tools.
 
 # CRITICAL: Apply OpenTelemetry fix BEFORE any other imports
 # This must be the very first import to prevent StopIteration errors
-import otel_emergency_fix  # Embedded fix that doesn't depend on layers
+import otel_fix  # Pre-creates opentelemetry.context module with working implementation
 
 import os
 import sys
