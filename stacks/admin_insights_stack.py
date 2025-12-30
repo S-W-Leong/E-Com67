@@ -330,13 +330,15 @@ class AdminInsightsStack(Stack):
                 "PRODUCTS_TABLE_NAME": Fn.import_value("E-Com67-ProductsTableName"),
                 "REGION": self.region,
                 "POWERTOOLS_SERVICE_NAME": "admin-insights-order-trends",
-                "LOG_LEVEL": "INFO"
+                "LOG_LEVEL": "INFO",
+                # Fix OpenTelemetry context initialization conflict between layers
+                "OTEL_PYTHON_CONTEXT": "contextvars_context"
             },
-            layers=[self.powertools_layer, self.utils_layer],
+            layers=[self.powertools_layer, self.utils_layer, self.strands_layer],
             description="Analytics tool for order trends analysis",
             tracing=_lambda.Tracing.ACTIVE
         )
-        
+
         # Lambda function for Sales Insights Tool
         self.sales_insights_lambda = _lambda.Function(
             self, "SalesInsightsLambda",
@@ -352,13 +354,15 @@ class AdminInsightsStack(Stack):
                 "PRODUCTS_TABLE_NAME": Fn.import_value("E-Com67-ProductsTableName"),
                 "REGION": self.region,
                 "POWERTOOLS_SERVICE_NAME": "admin-insights-sales-insights",
-                "LOG_LEVEL": "INFO"
+                "LOG_LEVEL": "INFO",
+                # Fix OpenTelemetry context initialization conflict between layers
+                "OTEL_PYTHON_CONTEXT": "contextvars_context"
             },
-            layers=[self.powertools_layer, self.utils_layer],
+            layers=[self.powertools_layer, self.utils_layer, self.strands_layer],
             description="Analytics tool for sales insights and product performance",
             tracing=_lambda.Tracing.ACTIVE
         )
-        
+
         # Lambda function for Product Search Tool
         self.product_search_lambda = _lambda.Function(
             self, "ProductSearchLambda",
@@ -373,9 +377,11 @@ class AdminInsightsStack(Stack):
                 "OPENSEARCH_ENDPOINT": Fn.import_value("E-Com67-OpenSearchEndpoint"),
                 "REGION": self.region,
                 "POWERTOOLS_SERVICE_NAME": "admin-insights-product-search",
-                "LOG_LEVEL": "INFO"
+                "LOG_LEVEL": "INFO",
+                # Fix OpenTelemetry context initialization conflict between layers
+                "OTEL_PYTHON_CONTEXT": "contextvars_context"
             },
-            layers=[self.powertools_layer, self.utils_layer],
+            layers=[self.powertools_layer, self.utils_layer, self.strands_layer],
             description="Analytics tool for product search using OpenSearch",
             tracing=_lambda.Tracing.ACTIVE
         )
@@ -573,7 +579,7 @@ class AdminInsightsStack(Stack):
         self.agent_lambda = _lambda.Function(
             self, "AdminInsightsAgentLambda",
             function_name="e-com67-admin-insights-agent",
-            runtime=_lambda.Runtime.PYTHON_3_12,
+            runtime=_lambda.Runtime.PYTHON_3_10,
             handler="handler.handler",
             code=_lambda.Code.from_asset("lambda/admin_insights_agent"),
             role=self.agent_execution_role,
@@ -590,7 +596,9 @@ class AdminInsightsStack(Stack):
                 "WEBSOCKET_API_ENDPOINT": "",  # Will be set after WebSocket API creation
                 "REGION": self.region,
                 "POWERTOOLS_SERVICE_NAME": "admin-insights-agent",
-                "LOG_LEVEL": "INFO"
+                "LOG_LEVEL": "INFO",
+                # Fix OpenTelemetry context initialization conflict between layers
+                "OTEL_PYTHON_CONTEXT": "contextvars_context"
             },
             layers=[self.powertools_layer, self.utils_layer, self.strands_layer],
             description="Admin Insights Agent runtime with Bedrock AgentCore and Strands SDK",

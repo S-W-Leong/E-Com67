@@ -50,3 +50,5 @@ layers/*/nodejs/
 
 # Keep package-lock.json for frontend applications
 !frontends/*/package-lock.json
+
+scribble.md

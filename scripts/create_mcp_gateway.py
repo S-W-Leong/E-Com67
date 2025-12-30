@@ -143,9 +143,44 @@ def get_mcp_gateway_role_arn(region: str = "ap-southeast-1") -> str:
         sys.exit(1)
 
 
+def get_cognito_client_id(region: str = "ap-southeast-1") -> str:
+    """
+    Get the Cognito User Pool Client ID from CloudFormation exports.
+    
+    Args:
+        region: AWS region
+        
+    Returns:
+        Client ID
+    """
+    print("Retrieving Cognito Client ID...")
+    
+    try:
+        cfn_client = boto3.client('cloudformation', region_name=region)
+        
+        # Get exports from CloudFormation
+        paginator = cfn_client.get_paginator('list_exports')
+        
+        for page in paginator.paginate():
+            for export in page.get('Exports', []):
+                if export['Name'] == 'E-Com67-UserPoolClientId':
+                    client_id = export['Value']
+                    print(f"✓ Found Client ID: {client_id}")
+                    return client_id
+        
+        print("✗ Client ID not found in CloudFormation exports")
+        print("  Make sure the DataStack is deployed with the Client ID export")
+        sys.exit(1)
+        
+    except Exception as e:
+        print(f"✗ Error retrieving Client ID: {str(e)}")
+        sys.exit(1)
+
+
 def create_gateway(
     region: str,
     user_pool_id: str,
+    client_id: str,
     role_arn: str
 ) -> dict:
     """
@@ -154,6 +189,7 @@ def create_gateway(
     Args:
         region: AWS region
         user_pool_id: Cognito User Pool ID for JWT validation
+        client_id: Cognito Client ID for allowed clients
         role_arn: IAM role ARN for gateway execution
         
     Returns:
@@ -171,6 +207,7 @@ def create_gateway(
         
         print(f"  Using Cognito issuer: {cognito_issuer}")
         print(f"  Discovery URL: {discovery_url}")
+        print(f"  Allowed Client ID: {client_id}")
         
         # Create MCP Gateway
         gateway_response = control_client.create_gateway(
@@ -183,7 +220,7 @@ def create_gateway(
             authorizerConfiguration={
                 "customJWTAuthorizer": {
                     "discoveryUrl": discovery_url,
-                    "allowedClients": []  # Allow all clients from the user pool
+                    "allowedClients": [client_id]  # Specify the Cognito client ID
                 }
             }
         )
@@ -250,13 +287,13 @@ def get_existing_gateway(region: str = "ap-southeast-1") -> dict:
         response = control_client.list_gateways()
         
         # Look for existing gateway with the same name
-        for gateway_summary in response.get('gateways', []):
+        for gateway_summary in response.get('items', []):
             if gateway_summary.get('name') == 'admin-insights-mcp-gateway':
                 # Get full gateway details
                 gateway_response = control_client.get_gateway(
-                    gatewayId=gateway_summary['id']
+                    gatewayIdentifier=gateway_summary['gatewayId']
                 )
-                return gateway_response['gateway']
+                return gateway_response
                 
     except Exception as e:
         print(f"Warning: Error checking for existing gateway: {str(e)}")
@@ -348,10 +385,10 @@ def main():
         
         if existing_gateway:
             print("✓ Gateway already exists!")
-            print(f"  Gateway ID: {existing_gateway['id']}")
+            print(f"  Gateway ID: {existing_gateway['gatewayId']}")
             print(f"  Gateway URL: {existing_gateway['gatewayUrl']}")
             print(f"  Status: {existing_gateway['status']}")
-            print(f"  Created: {existing_gateway.get('creationDateTime', 'N/A')}")
+            print(f"  Created: {existing_gateway.get('createdAt', 'N/A')}")
             print()
             print("Use this Gateway URL for external system integration:")
             print(f"  {existing_gateway['gatewayUrl']}")
@@ -364,11 +401,12 @@ def main():
     
     # Get required resources
     user_pool_id = get_cognito_user_pool_id(args.region)
+    client_id = get_cognito_client_id(args.region)
     lambda_arns = get_lambda_arns(args.region)
     role_arn = get_mcp_gateway_role_arn(args.region)
     
     # Create gateway
-    gateway = create_gateway(args.region, user_pool_id, role_arn)
+    gateway = create_gateway(args.region, user_pool_id, client_id, role_arn)
     gateway_id = gateway['id']
     
     print()

@@ -72,12 +72,14 @@ class ChatService {
     this.handlers = { ...this.handlers, ...handlers }
 
     try {
-      // Get auth token
+      // Get auth token (optional - WebSocket API doesn't require auth yet)
       const token = await this.getAuthToken()
       const sessionId = this.getSessionId()
 
-      // Build WebSocket URL with auth token and session ID
-      const wsUrl = `${this.getWebSocketUrl()}?token=${encodeURIComponent(token || 'guest')}&sessionId=${sessionId}`
+      // Build WebSocket URL with session ID
+      // Note: Token is included but not validated by the API yet
+      // This allows for future authentication implementation
+      const wsUrl = `${this.getWebSocketUrl()}?sessionId=${sessionId}${token ? `&token=${encodeURIComponent(token)}` : ''}`
 
       // Create WebSocket connection
       this.ws = new WebSocket(wsUrl)

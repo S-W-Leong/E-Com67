@@ -1,8 +1,8 @@
 #!/bin/bash
 
-"""
-Remember to source this script to run it in the same environment instead of bash it
-"""
+# Remember to source this script to run it in the same 
+# environment instead of bash it
+
 
 # activate venv 
 echo "Activating venv..."

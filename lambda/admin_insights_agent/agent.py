@@ -17,6 +17,12 @@ Requirements:
 - Requirements 8.3: Input validation
 """
 
+# IMPORTANT: Import otel_fix FIRST to prevent OpenTelemetry initialization conflicts
+try:
+    import otel_fix  # Sets OTEL_PYTHON_CONTEXT before any other imports
+except ImportError:
+    pass  # otel_fix is in the strands layer, might not be available in local dev
+
 import os
 import json
 import logging
@@ -42,9 +48,9 @@ MODEL_ID = os.environ.get('MODEL_ID', 'amazon.nova-pro-v1:0')
 AWS_REGION = os.environ.get('AWS_REGION', 'ap-southeast-1')
 
 # Tool Lambda ARNs
-ORDER_TRENDS_TOOL_ARN = os.environ.get('ORDER_TRENDS_TOOL_ARN', '')
-SALES_INSIGHTS_TOOL_ARN = os.environ.get('SALES_INSIGHTS_TOOL_ARN', '')
-PRODUCT_SEARCH_TOOL_ARN = os.environ.get('PRODUCT_SEARCH_TOOL_ARN', '')
+ORDER_TRENDS_TOOL_ARN = os.environ.get('ORDER_TRENDS_LAMBDA_ARN', '')
+SALES_INSIGHTS_TOOL_ARN = os.environ.get('SALES_INSIGHTS_LAMBDA_ARN', '')
+PRODUCT_SEARCH_TOOL_ARN = os.environ.get('PRODUCT_SEARCH_LAMBDA_ARN', '')
 
 # Initialize AWS clients
 lambda_client = boto3.client('lambda', region_name=AWS_REGION)
@@ -241,31 +247,111 @@ def initialize_agent(
     
     try:
         # Import Strands SDK components
-        from strands import Agent
+        from strands import Agent, tool
         from strands.models import BedrockModel
         from strands.agent.conversation_manager import SlidingWindowConversationManager
-        
+
+        # Use APAC inference profile for Nova Pro in ap-southeast-1
+        # Direct model ID is not supported for on-demand throughput
+        # APAC inference profile: apac.amazon.nova-pro-v1:0
+        model_profile_id = f"apac.{MODEL_ID}"
+
         # Create Bedrock model instance
         bedrock_model = BedrockModel(
-            model_id=MODEL_ID,
+            model_id=model_profile_id,
             temperature=0.3,  # Lower temperature for more consistent analytics
             max_tokens=4096,
             streaming=False,  # Disable streaming for simpler implementation
             region=AWS_REGION
         )
-        
+
         # Create conversation manager with session memory
         conversation_manager = SlidingWindowConversationManager(
             window_size=40  # 20 conversation turns (20 user + 20 assistant messages)
         )
-        
-        # Define tools for the agent
-        tools = [
-            ORDER_TRENDS_TOOL_SCHEMA,
-            SALES_INSIGHTS_TOOL_SCHEMA,
-            PRODUCT_SEARCH_TOOL_SCHEMA
-        ]
-        
+
+        # Define tool wrapper functions that call the Lambda functions
+        @tool
+        def order_trends(date_from: int, date_to: int, group_by: str = "day", metrics: list = None) -> dict:
+            """
+            Analyzes order trends over time including order volume, revenue trends,
+            status distribution, and growth rates.
+
+            Args:
+                date_from: Start date as Unix timestamp in seconds
+                date_to: End date as Unix timestamp in seconds
+                group_by: Time period grouping (day, week, or month)
+                metrics: List of metrics to calculate (volume, revenue, status_distribution)
+
+            Returns:
+                Order trends analysis results
+            """
+            try:
+                logger.info("order_trends tool called", extra={"date_from": date_from, "date_to": date_to})
+                result = invoke_tool("order_trends", {
+                    "date_from": date_from,
+                    "date_to": date_to,
+                    "group_by": group_by,
+                    "metrics": metrics or ["volume", "revenue"]
+                })
+                logger.info("order_trends tool result", extra={"result": str(result)[:200]})
+                return result
+            except Exception as e:
+                logger.error("order_trends tool error", extra={"error": str(e)})
+                raise
+
+        @tool
+        def sales_insights(date_from: int, date_to: int, category: str = None, limit: int = 10) -> dict:
+            """
+            Analyzes product sales performance including top-selling products, revenue by product,
+            category performance, and low performers.
+
+            Args:
+                date_from: Start date as Unix timestamp in seconds
+                date_to: End date as Unix timestamp in seconds
+                category: Optional filter by product category
+                limit: Maximum number of products to return (1-100)
+
+            Returns:
+                Sales performance analysis results
+            """
+            try:
+                params = {"date_from": date_from, "date_to": date_to, "limit": limit}
+                if category:
+                    params["category"] = category
+                result = invoke_tool("sales_insights", params)
+                return result
+            except Exception as e:
+                logger.error("sales_insights tool error", extra={"error": str(e)})
+                raise
+
+        @tool
+        def product_search(query: str, category: str = None, limit: int = 10) -> dict:
+            """
+            Searches for products by name, description, category, or other attributes
+            using semantic search.
+
+            Args:
+                query: Search query string
+                category: Optional filter by product category
+                limit: Maximum number of results to return (1-100)
+
+            Returns:
+                List of matching products
+            """
+            try:
+                params = {"query": query, "limit": limit}
+                if category:
+                    params["category"] = category
+                result = invoke_tool("product_search", params)
+                return result
+            except Exception as e:
+                logger.error("product_search tool error", extra={"error": str(e)})
+                raise
+
+        # Define tools list with callable functions
+        tools = [order_trends, sales_insights, product_search]
+
         # Create agent instance
         agent = Agent(
             model=bedrock_model,
@@ -278,14 +364,14 @@ def initialize_agent(
             "session_id": session_id,
             "tools_count": len(tools)
         })
-        
+
         return {
             "agent": agent,
             "session_id": session_id,
             "actor_id": actor_id,
             "memory_id": memory_id,
             "model_id": MODEL_ID,
-            "tools": [tool["toolSpec"]["name"] for tool in tools]
+            "tools": [tool.__name__ for tool in tools]
         }
         
     except ImportError as e:
@@ -561,30 +647,22 @@ def process_message(
     # Step 2: Invoke agent
     agent = agent_config["agent"]
     tools_invoked = []
-    
+
     try:
-        # Process message with agent
-        # Note: Strands SDK handles tool invocation internally
-        # We need to register our tool invocation function
-        
-        # For now, we'll use a simpler approach: invoke the agent and handle tool calls
-        response = agent.process(message)
-        
-        # Extract tool invocations if any
-        if hasattr(response, 'tool_calls') and response.tool_calls:
-            for tool_call in response.tool_calls:
-                tool_name = tool_call.get('name')
-                tool_input = tool_call.get('input', {})
-                
-                # Invoke the tool
-                invoke_tool(tool_name, tool_input)
-                tools_invoked.append(tool_name)
-                
-                # Provide tool result back to agent
-                # This would be handled by Strands SDK in a real implementation
-        
-        # Get final response text
-        response_text = str(response) if not isinstance(response, str) else response
+        # Invoke agent with message (Strands SDK handles tool invocation internally)
+        # The agent is callable - just call it like a function
+        result = agent(message)
+
+        # Extract response text from result
+        # Result structure: { "message": { "content": [{"text": "..."}] }, "stop_reason": "..." }
+        if hasattr(result, 'message') and result.message:
+            content = result.message.get('content', [])
+            if content and isinstance(content, list) and len(content) > 0:
+                response_text = content[0].get('text', str(result))
+            else:
+                response_text = str(result)
+        else:
+            response_text = str(result)
         
     except Exception as e:
         logger.error("Agent processing failed", extra={

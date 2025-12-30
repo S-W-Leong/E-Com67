@@ -81,14 +81,16 @@ def get_tool_schemas() -> dict:
     These schemas describe the input parameters and purpose of each tool,
     enabling external systems to discover and use them correctly.
     
+    Note: Schemas are simplified for Bedrock AgentCore API compatibility.
+    Only type, properties, required, items, and description fields are supported.
+    
     Returns:
         Dictionary mapping tool names to their schemas
     """
     return {
         "order_trends": {
             "name": "order_trends",
-            "description": "Analyze order trends over time including volume, revenue, status distribution, and growth rates. "
-                          "Supports grouping by day, week, or month for time-series analysis.",
+            "description": "Analyze order trends over time including volume, revenue, status distribution, and growth rates. Supports grouping by day, week, or month for time-series analysis.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -102,18 +104,15 @@ def get_tool_schemas() -> dict:
                     },
                     "group_by": {
                         "type": "string",
-                        "enum": ["day", "week", "month"],
-                        "description": "Time period grouping for aggregation",
-                        "default": "day"
+                        "description": "Time period grouping for aggregation. Valid values: day, week, month"
                     },
                     "metrics": {
                         "type": "array",
                         "items": {
                             "type": "string",
-                            "enum": ["volume", "revenue", "status_distribution"]
+                            "description": "Metric type: volume, revenue, or status_distribution"
                         },
-                        "description": "Metrics to calculate (volume=order count, revenue=total sales, status_distribution=order status breakdown)",
-                        "default": ["volume", "revenue"]
+                        "description": "Metrics to calculate (volume=order count, revenue=total sales, status_distribution=order status breakdown)"
                     }
                 },
                 "required": ["date_from", "date_to"]
@@ -121,8 +120,7 @@ def get_tool_schemas() -> dict:
         },
         "sales_insights": {
             "name": "sales_insights",
-            "description": "Analyze product sales performance including top sellers, revenue by product, category performance, "
-                          "and low performers. Provides actionable insights for inventory and marketing decisions.",
+            "description": "Analyze product sales performance including top sellers, revenue by product, category performance, and low performers. Provides actionable insights for inventory and marketing decisions.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -136,24 +134,19 @@ def get_tool_schemas() -> dict:
                     },
                     "category": {
                         "type": "string",
-                        "description": "Optional filter by product category (e.g., 'Electronics', 'Clothing')"
+                        "description": "Optional filter by product category (e.g., Electronics, Clothing)"
                     },
                     "sort_by": {
                         "type": "string",
-                        "enum": ["revenue", "units_sold", "growth"],
-                        "description": "Sort products by revenue, units sold, or growth rate",
-                        "default": "revenue"
+                        "description": "Sort products by revenue, units_sold, or growth"
                     },
                     "limit": {
                         "type": "integer",
-                        "minimum": 1,
-                        "maximum": 100,
-                        "description": "Maximum number of products to return (1-100)",
-                        "default": 10
+                        "description": "Maximum number of products to return (1-100)"
                     },
                     "low_performer_threshold": {
                         "type": "number",
-                        "description": "Revenue threshold for identifying low performers. If not provided, uses bottom 10% of products."
+                        "description": "Revenue threshold for identifying low performers. If not provided, uses bottom 10% of products"
                     }
                 },
                 "required": ["date_from", "date_to"]
@@ -161,16 +154,13 @@ def get_tool_schemas() -> dict:
         },
         "product_search": {
             "name": "product_search",
-            "description": "Search products using OpenSearch with fuzzy matching for typo tolerance. "
-                          "Searches across product name, description, tags, brand, and SKU. "
-                          "Supports category filtering and active/inactive product filtering.",
+            "description": "Search products using OpenSearch with fuzzy matching. Searches name, description, tags, brand, and SKU.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "query": {
                         "type": "string",
-                        "description": "Search query string (e.g., 'wireless headphones', 'laptop', 'nike shoes')",
-                        "minLength": 1
+                        "description": "Search query string (e.g., wireless headphones, laptop, nike shoes)"
                     },
                     "category": {
                         "type": "string",
@@ -178,15 +168,11 @@ def get_tool_schemas() -> dict:
                     },
                     "limit": {
                         "type": "integer",
-                        "minimum": 1,
-                        "maximum": 100,
-                        "description": "Maximum number of results to return (1-100)",
-                        "default": 10
+                        "description": "Maximum number of results to return (1-100)"
                     },
                     "include_inactive": {
                         "type": "boolean",
-                        "description": "Include inactive products in search results",
-                        "default": False
+                        "description": "Include inactive products in search results"
                     }
                 },
                 "required": ["query"]
@@ -221,28 +207,38 @@ def register_tool(
     
     try:
         response = control_client.create_gateway_target(
-            gatewayId=gateway_id,
+            gatewayIdentifier=gateway_id,
             name=tool_name,
             description=tool_schema['description'],
-            targetType="LAMBDA",
             targetConfiguration={
-                "lambdaTarget": {
-                    "lambdaArn": lambda_arn
+                "mcp": {
+                    "lambda": {
+                        "lambdaArn": lambda_arn,
+                        "toolSchema": {
+                            "inlinePayload": [
+                                {
+                                    "name": tool_schema['name'],
+                                    "description": tool_schema['description'],
+                                    "inputSchema": tool_schema['inputSchema']
+                                }
+                            ]
+                        }
+                    }
                 }
             },
-            toolSchema={
-                "name": tool_schema['name'],
-                "description": tool_schema['description'],
-                "inputSchema": tool_schema['inputSchema']
-            }
+            credentialProviderConfigurations=[
+                {
+                    "credentialProviderType": "GATEWAY_IAM_ROLE"
+                }
+            ]
         )
         
-        target_id = response['target']['id']
+        target_id = response['targetId']
         print(f"✓ Tool registered successfully!")
         print(f"  Target ID: {target_id}")
-        print(f"  Status: {response['target']['status']}")
+        print(f"  Status: {response['status']}")
         
-        return response['target']
+        return response
         
     except Exception as e:
         print(f"✗ Error registering tool {tool_name}: {str(e)}")
@@ -263,13 +259,13 @@ def list_registered_tools(control_client, gateway_id: str) -> list:
     print("\nListing registered tools...")
     
     try:
-        response = control_client.list_gateway_targets(gatewayId=gateway_id)
-        targets = response.get('targets', [])
+        response = control_client.list_gateway_targets(gatewayIdentifier=gateway_id)
+        targets = response.get('items', [])
         
         print(f"✓ Found {len(targets)} registered tools")
         
         for target in targets:
-            print(f"  - {target['name']} (ID: {target['id']}, Status: {target['status']})")
+            print(f"  - {target['name']} (ID: {target['targetId']}, Status: {target['status']})")
         
         return targets
         
@@ -292,17 +288,16 @@ def verify_gateway_status(control_client, gateway_id: str) -> bool:
     print(f"\nVerifying gateway status...")
     
     try:
-        response = control_client.get_gateway(gatewayId=gateway_id)
-        gateway = response['gateway']
+        response = control_client.get_gateway(gatewayIdentifier=gateway_id)
         
-        status = gateway['status']
+        status = response['status']
         print(f"  Gateway Status: {status}")
         
-        if status == 'ACTIVE':
-            print("✓ Gateway is active and ready")
+        if status == 'READY':
+            print("✓ Gateway is ready")
             return True
         else:
-            print(f"✗ Gateway is not active (status: {status})")
+            print(f"✗ Gateway is not ready (status: {status})")
             return False
             
     except Exception as e:
@@ -360,10 +355,13 @@ def main():
     for tool_name, lambda_arn in lambda_arns.items():
         if tool_name in tool_schemas:
             try:
+                # Convert tool name to valid format (replace underscores with hyphens)
+                target_name = tool_name.replace('_', '-')
+                
                 target = register_tool(
                     control_client,
                     args.gateway_id,
-                    tool_name,
+                    target_name,
                     tool_schemas[tool_name],
                     lambda_arn
                 )
