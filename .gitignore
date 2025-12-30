@@ -51,4 +51,11 @@ layers/*/nodejs/
 # Keep package-lock.json for frontend applications
 !frontends/*/package-lock.json
 
+# Agent configs
+.kiro/*
+.claude/*
+
+# Misc (might contain sensitive info!)
 scribble.md
+start.sh
+
