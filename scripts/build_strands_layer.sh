@@ -16,7 +16,7 @@ docker run --rm \
   -v "$(pwd)/layers/strands:/var/task" \
   -w /var/task \
   python:3.10-slim \
-  pip install -r requirements-minimal.txt -t python/ --upgrade --no-cache-dir
+  pip install -r requirements.txt -t python/ --upgrade --no-cache-dir
 
 # Clean up Python cache files
 echo "🧹 Cleaning up cache files..."

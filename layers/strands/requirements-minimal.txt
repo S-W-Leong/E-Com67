@@ -24,6 +24,10 @@ charset-normalizer>=2,<4
 # MCP (minimal)
 mcp>=1.11.0,<2.0.0
 
-# OpenTelemetry (minimal)
+# OpenTelemetry (minimal) - include semantic conventions for proper entry point registration
 opentelemetry-api>=1.30.0,<2.0.0
 opentelemetry-sdk>=1.30.0,<2.0.0
+opentelemetry-semantic-conventions>=0.51b0
+
+# Ensure entry points are properly discoverable in Lambda
+importlib-metadata>=6.0.0

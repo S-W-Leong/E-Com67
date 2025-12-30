@@ -90,7 +90,7 @@ class BackendPipelineStack(Stack):
                             "pip install -r layers/stripe/requirements.txt -t layers/stripe/python/ --no-cache-dir --platform manylinux2014_x86_64 --only-binary=:all: || pip install -r layers/stripe/requirements.txt -t layers/stripe/python/ --no-cache-dir",
                             "pip install -r layers/opensearch/requirements.txt -t layers/opensearch/python/ --no-cache-dir --platform manylinux2014_x86_64 --only-binary=:all: || pip install -r layers/opensearch/requirements.txt -t layers/opensearch/python/ --no-cache-dir",
                             # Strands layer: Use pip with explicit Python version and platform for Lambda compatibility
-                            "pip install -r layers/strands/requirements-minimal.txt -t layers/strands/python/ --no-cache-dir --platform manylinux2014_x86_64 --python-version 3.10 --only-binary=:all: --implementation cp || pip install -r layers/strands/requirements-minimal.txt -t layers/strands/python/ --no-cache-dir",
+                            "pip install -r layers/strands/requirements.txt -t layers/strands/python/ --no-cache-dir --platform manylinux2014_x86_64 --python-version 3.10 --only-binary=:all: --implementation cp || pip install -r layers/strands/requirements.txt -t layers/strands/python/ --no-cache-dir",
                             # Utils layer has no external dependencies - just ensure the structure is correct
                             "echo 'Utils layer already contains pure Python code - no build needed'",
                             # Clean non-deterministic files that cause hash mismatches

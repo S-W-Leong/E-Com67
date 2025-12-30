@@ -141,7 +141,7 @@ else:
         description="E-Com67 Platform - Frontend hosting with S3 and CloudFront"
     )
 
-    # Admin Insights layer - AI agent for admin analytics (optional)
+    # Admin Insights layer - AI agent for admin analytics 
     if ADMIN_INSIGHTS_AVAILABLE:
         admin_insights_stack = AdminInsightsStack(
             app,

@@ -29,9 +29,14 @@ urllib3>=1.25.4,<1.27
 idna>=2.5,<4
 charset-normalizer>=2,<4
 
-# MCP (telemetry provided by powertools layer to avoid conflicts)
+# MCP with OpenTelemetry support
 mcp>=1.11.0,<2.0.0
-# REMOVED: OpenTelemetry packages (provided by powertools layer)
-# opentelemetry-api>=1.30.0,<2.0.0
-# opentelemetry-sdk>=1.30.0,<2.0.0
-# opentelemetry-instrumentation-threading>=0.51b0,<1.00b0
+
+# OpenTelemetry packages (required by strands-agents)
+opentelemetry-api>=1.30.0,<2.0.0
+opentelemetry-sdk>=1.30.0,<2.0.0
+opentelemetry-instrumentation-threading>=0.51b0,<1.00b0
+opentelemetry-semantic-conventions>=0.51b0
+
+# Ensure entry points are properly discoverable in Lambda
+importlib-metadata>=6.0.0
