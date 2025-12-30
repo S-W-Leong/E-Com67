@@ -6,20 +6,12 @@ Handles WebSocket connections and provides intelligent product recommendations,
 cart management, and order tracking through custom tools.
 """
 
-# IMPORTANT: Import otel_fix FIRST to prevent OpenTelemetry initialization conflicts
-try:
-    import otel_fix  # Sets OTEL_PYTHON_CONTEXT before any other imports
-except ImportError:
-    pass  # otel_fix is in the strands layer, might not be available in local dev
+# CRITICAL: Apply OpenTelemetry fix BEFORE any other imports
+# This must be the very first import to prevent StopIteration errors
+import otel_emergency_fix  # Embedded fix that doesn't depend on layers
 
-# If the patching approach doesn't work, try the bypass approach
-try:
-    # Check if we should use the bypass (can be set via environment variable)
-    import os
-    if os.environ.get('OTEL_BYPASS_ENABLED', 'false').lower() == 'true':
-        import otel_bypass
-except ImportError:
-    pass
+import os
+import sys
 
 import json
 import boto3

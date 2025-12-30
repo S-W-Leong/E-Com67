@@ -2,7 +2,7 @@
 
 A comprehensive serverless e-commerce platform built on AWS demonstrating modern cloud architecture patterns, microservices design, and advanced features including AI-powered customer support, real-time search, and automated order processing.
 
-**Latest Update**: Pipeline rebuilt with x86_64 architecture for Strands SDK compatibility. ✅ Pipeline tested and working.
+**Latest Update**: Added Admin Insights Agent with Amazon Nova Pro, Bedrock Guardrails, and analytics tools. Meta Pixel integration for customer tracking. OpenTelemetry Lambda layer fix for Strands SDK compatibility.
 
 ## Table of Contents
 
@@ -21,8 +21,11 @@ A comprehensive serverless e-commerce platform built on AWS demonstrating modern
 - [AI Chat Feature](#ai-chat-feature)
 - [Search Functionality](#search-functionality)
 - [Notification System](#notification-system)
+- [Meta Pixel Integration](#meta-pixel-integration)
 - [Testing](#system-testing)
 - [Monitoring and Observability](#monitoring-and-observability)
+- [Technical Notes](#technical-notes)
+- [Utility Scripts](#utility-scripts)
 - [Cost Optimization](#cost-optimization)
 - [Troubleshooting](#troubleshooting)
 
@@ -81,8 +84,9 @@ DataStack (DynamoDB, Cognito, OpenSearch, S3)
     v
 ComputeStack (Lambda, SQS, SNS, Step Functions, Secrets)
     |
-    v
-ApiStack (REST API Gateway, WebSocket API Gateway)
+    +---> ApiStack (REST API Gateway, WebSocket API Gateway)
+    |
+    +---> AdminInsightsStack (Admin Analytics Agent, Guardrails, WebSocket API)
 
 FrontendStack (S3 Buckets, CloudFront Distributions)
     |
@@ -138,6 +142,7 @@ e-com67/
 │   ├── data_stack.py          # DynamoDB, Cognito, OpenSearch, S3
 │   ├── compute_stack.py       # Lambda, SQS, SNS, Step Functions
 │   ├── api_stack.py           # API Gateway (REST + WebSocket)
+│   ├── admin_insights_stack.py # Admin Insights Agent, Guardrails, Analytics
 │   ├── frontend_stack.py      # S3 buckets and CloudFront distributions
 │   ├── backend_pipeline_stack.py    # Backend CI/CD Pipeline
 │   ├── admin_pipeline_stack.py      # Admin dashboard CI/CD Pipeline
@@ -165,7 +170,16 @@ e-com67/
 │   ├── knowledge_processor/   # RAG document processing
 │   ├── knowledge_manager/     # Knowledge base management
 │   ├── notification_orchestrator/  # Notification routing
-│   └── email_notification/    # SES email sending
+│   ├── email_notification/    # SES email sending
+│   ├── admin_insights_agent/  # Admin Insights AI agent
+│   │   ├── handler.py         # Main agent WebSocket handler
+│   │   ├── agent.py           # Bedrock AgentCore integration
+│   │   ├── websocket_connect.py    # Connection handler
+│   │   └── websocket_disconnect.py # Disconnect handler
+│   └── admin_insights_tools/  # Admin analytics tools
+│       ├── order_trends.py    # Order trends analysis
+│       ├── sales_insights.py  # Sales performance analytics
+│       └── product_search.py  # Product search analytics
 │
 ├── layers/                     # Shared Lambda layers
 │   ├── powertools/            # AWS Lambda Powertools
@@ -184,6 +198,12 @@ e-com67/
 │   ├── stripe-frontend-integration.md
 │   ├── knowledge-base-guide.md
 │   └── notification-system-integration.md
+│
+├── scripts/                    # Utility scripts
+│   ├── manage_knowledge_base.py    # Knowledge base management
+│   ├── create_admin_insights_memory.py # Create AgentCore memory
+│   ├── build_strands_layer.sh      # Build Strands SDK layer
+│   └── setup-stripe-secret.sh      # Configure Stripe API key
 │
 ├── tests/                      # Test files
 │
@@ -214,6 +234,8 @@ e-com67/
 | **CodePipeline** | CI/CD pipeline orchestration | EventBridge triggered, three separate pipelines |
 | **CodeBuild** | Build and synthesis | Lambda layers, CDK synth, npm builds |
 | **CodeCommit** | Source code repository | Git-based version control |
+| **Bedrock Guardrails** | AI safety and PII protection | PII detection, prompt attack filtering |
+| **Amazon Nova** | AI model for Admin Insights | amazon.nova-pro-v1:0 for analytics agent |
 
 ---
 
@@ -824,6 +846,44 @@ Authorization: Bearer <id-token>
 }
 ```
 
+#### Admin Insights Agent (Requires Auth + Admin Role)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| WebSocket | `wss://{admin-insights-websocket-id}.execute-api.{region}.amazonaws.com/prod` | Admin analytics agent |
+
+**WebSocket Routes:**
+- `$connect` - Establish connection with token authentication
+- `$disconnect` - Clean up connection and terminate session
+- `sendMessage` - Send analytics query to Admin Insights Agent
+
+**Message Format:**
+```json
+{
+  "action": "sendMessage",
+  "message": "What were the top selling products this week?",
+  "sessionId": "session-uuid"
+}
+```
+
+**Response Format:**
+```json
+{
+  "type": "message",
+  "message": "Based on this week's data, here are the top selling products...",
+  "data": {
+    "tools_used": ["order_trends", "sales_insights"],
+    "analytics": {...}
+  },
+  "sessionId": "session-uuid"
+}
+```
+
+**Guardrails:**
+- PII (email, phone, credit card, SSN, addresses) is automatically blocked
+- Prompt injection attacks are filtered
+- Blocked requests receive appropriate error messages
+
 ### Error Responses
 
 All errors follow a consistent format:
@@ -931,6 +991,32 @@ Keeps OpenSearch index synchronized with DynamoDB.
 - Real-time index updates
 - Handles insert, modify, delete events
 
+### Admin Insights Agent (`e-com67-admin-insights-agent`)
+
+AI-powered analytics agent for admin dashboard using Amazon Nova and Bedrock AgentCore.
+
+**Key Features:**
+- Bedrock AgentCore with session-based memory
+- Amazon Nova Pro v1 model for natural language understanding
+- Bedrock Guardrails for PII protection and prompt attack filtering
+- WebSocket-based real-time communication
+- Integrates with analytics tools (Order Trends, Sales Insights, Product Search)
+
+### Admin Insights Analytics Tools
+
+Three specialized Lambda functions for business analytics:
+
+| Function | Description |
+|----------|-------------|
+| `e-com67-admin-insights-order-trends` | Analyzes order patterns, revenue trends, and growth rates with configurable time grouping |
+| `e-com67-admin-insights-sales-insights` | Provides sales performance metrics and product analytics |
+| `e-com67-admin-insights-product-search` | Product discovery and search analytics using OpenSearch |
+
+**Guardrails Protection:**
+- PII detection (email, phone, credit card, SSN, addresses)
+- Prompt attack filtering
+- Blocked content messaging for sensitive information
+
 ---
 
 ## Data Models
@@ -1000,6 +1086,24 @@ Keeps OpenSearch index synchronized with DynamoDB.
 - Message type classification for different content
 - Metadata support for structured responses
 - Automatic cleanup of old conversations
+
+### Admin Insights Connections Table (`e-com67-admin-insights-connections`)
+
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| connectionId | String (PK) | WebSocket connection ID |
+| sessionId | String | Agent session ID |
+| actorId | String | Admin user ID (GSI) |
+| connectedAt | Number | Connection timestamp |
+| ttl | Number | Time-to-live for auto cleanup (24 hours) |
+
+**GSI:** `actorId-index` (actorId)
+
+**Features:**
+- WebSocket connection tracking for Admin Insights Agent
+- Session-based memory management
+- TTL-based automatic cleanup of stale connections
+- Actor-based querying for admin operations
 
 ---
 
@@ -1328,6 +1432,54 @@ See [docs/notification-system-integration.md](docs/notification-system-integrati
 
 ---
 
+## Meta Pixel Integration
+
+The customer app includes Meta Pixel tracking for ad optimization, audience building, and conversion tracking.
+
+### Setup
+
+1. **Install dependency:**
+```bash
+cd frontends/customer-app
+npm install react-facebook-pixel
+```
+
+2. **Configure environment:**
+```bash
+# .env.local
+VITE_META_PIXEL_ID=your_pixel_id_here
+```
+
+3. **For production, store in AWS SSM:**
+```bash
+aws ssm put-parameter \
+  --name "/e-com67/meta-pixel-id" \
+  --value "YOUR_PRODUCTION_PIXEL_ID" \
+  --type "String" \
+  --region ap-southeast-1
+```
+
+### Tracked Events
+
+| Event | Description |
+|-------|-------------|
+| `PageView` | Automatic on route changes |
+| `ViewContent` | Product detail page views |
+| `Search` | Product search queries |
+| `AddToCart` | Items added to cart |
+| `InitiateCheckout` | Checkout page loads |
+| `Purchase` | Completed orders |
+
+### Validation
+
+- Use **Meta Pixel Helper** Chrome extension for testing
+- Monitor events in **Meta Business Suite > Events Manager**
+- Check browser console for debug logs
+
+See [META_PIXEL_IMPLEMENTATION.md](META_PIXEL_IMPLEMENTATION.md) for complete implementation checklist.
+
+---
+
 ## System Testing
 
 ### Backend Tests
@@ -1407,6 +1559,64 @@ Metrics are published to the `E-Com67` namespace:
 ```bash
 # View recent traces
 aws xray get-service-graph --start-time $(date -v-1H +%s) --end-time $(date +%s)
+```
+
+---
+
+## Technical Notes
+
+### OpenTelemetry Lambda Layer Compatibility
+
+When using multiple Lambda layers that include OpenTelemetry dependencies (e.g., Strands SDK layer with AWS Lambda Powertools), context initialization conflicts can occur. This project includes a fix in `layers/strands/python/otel_fix.py`.
+
+**Environment Variables:**
+```bash
+OTEL_SDK_DISABLED=true
+OTEL_PYTHON_CONTEXT=contextvars_context
+OTEL_PYTHON_DISABLED_INSTRUMENTATIONS=all
+```
+
+**How it works:**
+- The fix disables OpenTelemetry SDK to prevent conflicts
+- Provides a minimal context implementation using Python's `contextvars`
+- Implements import hooks to patch OpenTelemetry modules safely
+- Must be imported BEFORE any OpenTelemetry imports in Lambda handlers
+
+**Usage in Lambda:**
+```python
+# Import at the very top of your handler file
+import otel_fix  # Must be first import
+
+# Then import other dependencies
+from aws_lambda_powertools import Logger
+```
+
+---
+
+## Utility Scripts
+
+| Script | Description |
+|--------|-------------|
+| `scripts/manage_knowledge_base.py` | Upload documents, list items, and manage the RAG knowledge base |
+| `scripts/create_admin_insights_memory.py` | Create Bedrock AgentCore memory for Admin Insights Agent |
+| `scripts/build_strands_layer.sh` | Build Strands SDK Lambda layer with Docker (x86_64) |
+| `scripts/rebuild_strands_layer.sh` | Rebuild and redeploy Strands layer |
+| `scripts/setup-stripe-secret.sh` | Configure Stripe API key in Secrets Manager |
+| `scripts/setup-ssm-parameters.sh` | Configure SSM parameters for the application |
+| `scripts/debug_opensearch.py` | Debug OpenSearch connectivity and queries |
+| `scripts/recreate_index.py` | Recreate OpenSearch index with proper mappings |
+| `scripts/test_websocket_message.py` | Test WebSocket API connections |
+
+**Example Usage:**
+```bash
+# Create Admin Insights memory (required before deploying AdminInsightsStack)
+python scripts/create_admin_insights_memory.py
+
+# Rebuild Strands layer after dependency changes
+./scripts/build_strands_layer.sh
+
+# Upload knowledge base documents
+python scripts/manage_knowledge_base.py upload-samples
 ```
 
 ---
@@ -1509,6 +1719,32 @@ headers = {
 3. Review memory limit configuration
 4. Check conversation summary generation
 
+#### Admin Insights Agent Issues
+
+**Agent Not Responding:**
+1. Verify Bedrock AgentCore memory was created (`scripts/create_admin_insights_memory.py`)
+2. Check Amazon Nova model access permissions in Bedrock
+3. Verify `MEMORY_ID` environment variable is set correctly
+4. Review guardrail configuration and blocked content logs
+
+**Analytics Tool Failures:**
+1. Check DynamoDB table permissions for Orders and Products tables
+2. Verify OpenSearch domain access for Product Search tool
+3. Review tool Lambda function logs in CloudWatch
+4. Check cross-stack export values are correct
+
+**WebSocket Connection Issues:**
+1. Verify token is passed in query string (`?token=...`)
+2. Check connections table for stale entries
+3. Review WebSocket connect handler logs
+4. Verify API Gateway WebSocket stage is deployed
+
+**Guardrail Blocking:**
+1. Check if input contains PII (email, phone, credit card, etc.)
+2. Review blocked content messaging configuration
+3. Test with sanitized queries
+4. Check guardrail metrics in CloudWatch
+
 ### Useful Commands
 
 ```bash
@@ -1532,6 +1768,18 @@ python lambda/chat/test_strands_setup.py
 
 # Run chat integration tests
 python -m pytest tests/test_strands_integration_comprehensive.py -v
+
+# Get Admin Insights WebSocket URL
+aws cloudformation describe-stacks \
+  --stack-name E-Com67-AdminInsightsStack \
+  --query "Stacks[0].Outputs[?OutputKey=='WebSocketURL'].OutputValue" \
+  --output text
+
+# View Admin Insights agent logs
+aws logs tail /aws/lambda/e-com67-admin-insights-agent --follow
+
+# Check guardrail status
+aws bedrock get-guardrail --guardrail-identifier <guardrail-id>
 ```
 
 ---

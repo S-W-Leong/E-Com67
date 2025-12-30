@@ -5,6 +5,10 @@ This module contains the enhanced chat functionality with Pydantic models,
 response formatters, and validation utilities for the E-Com67 platform.
 """
 
+# CRITICAL: Apply OpenTelemetry fix BEFORE any other imports
+# This embedded fix doesn't depend on layers and is always available
+import otel_emergency_fix
+
 # Import main models for easy access
 from .models import (
     # Product models
