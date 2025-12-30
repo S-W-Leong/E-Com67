@@ -105,9 +105,8 @@ class BackendPipelineStack(Stack):
                     "build": {
                         "commands": [
                             "echo 'Deploying backend stacks...'",
-                            # Deploy all backend stacks together
-                            # This allows CDK to handle cross-stack dependencies and export changes
-                            "cdk deploy --all --require-approval never",
+                            # Deploy only backend stacks (not Frontend which has separate pipeline)
+                            "cdk deploy E-Com67-DataStack E-Com67-ComputeStack E-Com67-ApiStack E-Com67-AdminInsightsStack --require-approval never",
                         ]
                     }
                 },
