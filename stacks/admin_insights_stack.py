@@ -332,7 +332,7 @@ class AdminInsightsStack(Stack):
                 "POWERTOOLS_SERVICE_NAME": "admin-insights-order-trends",
                 "LOG_LEVEL": "INFO",
                 # Fix OpenTelemetry context initialization conflict between layers
-                "OTEL_PYTHON_CONTEXT": "contextvars_context"
+                "OTEL_SDK_DISABLED": "true"
             },
             layers=[self.powertools_layer, self.utils_layer, self.strands_layer],
             description="Analytics tool for order trends analysis",
@@ -356,7 +356,7 @@ class AdminInsightsStack(Stack):
                 "POWERTOOLS_SERVICE_NAME": "admin-insights-sales-insights",
                 "LOG_LEVEL": "INFO",
                 # Fix OpenTelemetry context initialization conflict between layers
-                "OTEL_PYTHON_CONTEXT": "contextvars_context"
+                "OTEL_SDK_DISABLED": "true"
             },
             layers=[self.powertools_layer, self.utils_layer, self.strands_layer],
             description="Analytics tool for sales insights and product performance",
@@ -379,7 +379,7 @@ class AdminInsightsStack(Stack):
                 "POWERTOOLS_SERVICE_NAME": "admin-insights-product-search",
                 "LOG_LEVEL": "INFO",
                 # Fix OpenTelemetry context initialization conflict between layers
-                "OTEL_PYTHON_CONTEXT": "contextvars_context"
+                "OTEL_SDK_DISABLED": "true"
             },
             layers=[self.powertools_layer, self.utils_layer, self.strands_layer],
             description="Analytics tool for product search using OpenSearch",
@@ -598,7 +598,7 @@ class AdminInsightsStack(Stack):
                 "POWERTOOLS_SERVICE_NAME": "admin-insights-agent",
                 "LOG_LEVEL": "INFO",
                 # Fix OpenTelemetry context initialization conflict between layers
-                "OTEL_PYTHON_CONTEXT": "contextvars_context"
+                "OTEL_SDK_DISABLED": "true"
             },
             layers=[self.powertools_layer, self.utils_layer, self.strands_layer],
             description="Admin Insights Agent runtime with Bedrock AgentCore and Strands SDK",

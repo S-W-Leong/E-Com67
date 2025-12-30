@@ -511,8 +511,8 @@ class ComputeStack(Stack):
                 "POWERTOOLS_SERVICE_NAME": "chat",
                 "POWERTOOLS_METRICS_NAMESPACE": "E-Com67",
                 "LOG_LEVEL": "INFO",
-                # OpenTelemetry context provider for Lambda environment
-                "OTEL_PYTHON_CONTEXT": "contextvars_context"
+                # Disable OpenTelemetry SDK to avoid entry point discovery issues in Lambda
+                "OTEL_SDK_DISABLED": "true"
             },
             tracing=_lambda.Tracing.ACTIVE,
             timeout=Duration.seconds(30),
