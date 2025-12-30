@@ -30,11 +30,10 @@ from constructs import Construct
 class AdminInsightsStack(Stack):
     """Admin Insights Agent stack with Bedrock AgentCore, guardrails, and analytics tools"""
 
-    def __init__(self, scope: Construct, construct_id: str, data_stack, compute_stack=None, **kwargs) -> None:
+    def __init__(self, scope: Construct, construct_id: str, data_stack, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
         
         self.data_stack = data_stack
-        self.compute_stack = compute_stack
         
         # Create Bedrock Guardrail for security
         self._create_guardrail()
@@ -256,25 +255,30 @@ class AdminInsightsStack(Stack):
 
     def _create_lambda_layers(self):
         """
-        Reference Lambda layers from ComputeStack via direct CDK references.
+        Import Lambda layers from ComputeStack using CloudFormation import values.
         
-        This approach eliminates CloudFormation cross-stack exports, which cause
-        deployment failures when layer ARNs change. CDK manages the dependency
-        automatically and deploys both stacks together when needed.
+        This approach uses Fn.import_value() to reference layer ARNs exported by ComputeStack,
+        avoiding direct CDK references that create automatic CloudFormation exports.
+        This prevents cross-stack deployment conflicts when layer ARNs change.
         
-        IMPORTANT: compute_stack is a required parameter. The Fn.import_value
-        fallback has been removed to prevent cross-stack export issues.
+        The layers are imported as LayerVersion objects using from_layer_version_arn(),
+        which allows them to be used in Lambda function definitions.
         """
-        if not self.compute_stack:
-            raise ValueError(
-                "compute_stack is required for AdminInsightsStack. "
-                "Pass compute_stack when instantiating this stack to get layers directly."
-            )
+        # Import layers using CloudFormation import values (same pattern as ApiStack)
+        self.powertools_layer = _lambda.LayerVersion.from_layer_version_arn(
+            self, "ImportedPowertoolsLayer",
+            layer_version_arn=Fn.import_value("E-Com67-PowertoolsLayerArn")
+        )
         
-        # Use direct CDK references - this is the only supported approach
-        self.powertools_layer = self.compute_stack.powertools_layer
-        self.utils_layer = self.compute_stack.utils_layer
-        self.strands_layer = self.compute_stack.strands_layer
+        self.utils_layer = _lambda.LayerVersion.from_layer_version_arn(
+            self, "ImportedUtilsLayer", 
+            layer_version_arn=Fn.import_value("E-Com67-UtilsLayerArn")
+        )
+        
+        self.strands_layer = _lambda.LayerVersion.from_layer_version_arn(
+            self, "ImportedStrandsLayer",
+            layer_version_arn=Fn.import_value("E-Com67-StrandsLayerArn")
+        )
 
     def _create_connections_table(self):
         """

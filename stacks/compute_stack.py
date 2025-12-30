@@ -923,9 +923,41 @@ class ComputeStack(Stack):
     def _create_exports(self):
         """Create CloudFormation exports for cross-stack resource sharing"""
         
-        # Note: Layer ARN exports have been REMOVED to prevent cross-stack dependency issues.
-        # AdminInsightsStack now receives layers directly via compute_stack parameter.
-        # This allows both stacks to be updated together without CloudFormation export conflicts.
+        # Lambda layer exports - required for AdminInsightsStack import values approach
+        CfnOutput(
+            self, "PowertoolsLayerArn",
+            value=self.powertools_layer.layer_version_arn,
+            export_name="E-Com67-PowertoolsLayerArn",
+            description="AWS Lambda Powertools layer ARN"
+        )
+        
+        CfnOutput(
+            self, "UtilsLayerArn", 
+            value=self.utils_layer.layer_version_arn,
+            export_name="E-Com67-UtilsLayerArn",
+            description="Common utilities layer ARN"
+        )
+        
+        CfnOutput(
+            self, "StrandsLayerArn",
+            value=self.strands_layer.layer_version_arn,
+            export_name="E-Com67-StrandsLayerArn", 
+            description="Strands SDK layer ARN"
+        )
+        
+        CfnOutput(
+            self, "StripeLayerArn",
+            value=self.stripe_layer.layer_version_arn,
+            export_name="E-Com67-StripeLayerArn",
+            description="Stripe SDK layer ARN"
+        )
+        
+        CfnOutput(
+            self, "OpenSearchLayerArn",
+            value=self.opensearch_layer.layer_version_arn,
+            export_name="E-Com67-OpenSearchLayerArn",
+            description="OpenSearch client layer ARN"
+        )
         
         # Lambda function exports
         CfnOutput(
