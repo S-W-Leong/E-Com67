@@ -88,7 +88,8 @@ class BackendPipelineStack(Stack):
                             "pip install -r layers/powertools/requirements.txt -t layers/powertools/python/ --no-cache-dir --platform manylinux2014_x86_64 --only-binary=:all: || pip install -r layers/powertools/requirements.txt -t layers/powertools/python/ --no-cache-dir",
                             "pip install -r layers/stripe/requirements.txt -t layers/stripe/python/ --no-cache-dir --platform manylinux2014_x86_64 --only-binary=:all: || pip install -r layers/stripe/requirements.txt -t layers/stripe/python/ --no-cache-dir",
                             "pip install -r layers/opensearch/requirements.txt -t layers/opensearch/python/ --no-cache-dir --platform manylinux2014_x86_64 --only-binary=:all: || pip install -r layers/opensearch/requirements.txt -t layers/opensearch/python/ --no-cache-dir",
-                            "pip install -r layers/strands/requirements-minimal.txt -t layers/strands/python/ --no-cache-dir --platform manylinux2014_x86_64 --only-binary=:all: || pip install -r layers/strands/requirements-minimal.txt -t layers/strands/python/ --no-cache-dir",
+                            # Strands layer: Use Docker with Lambda Python 3.10 image for binary compatibility
+                            "docker run --rm --platform linux/amd64 -v \"$(pwd)/layers/strands:/var/task\" -w /var/task public.ecr.aws/lambda/python:3.10 pip install -r requirements-minimal.txt -t python/ --upgrade --no-cache-dir",
                             # Utils layer has no external dependencies - just ensure the structure is correct
                             "echo 'Utils layer already contains pure Python code - no build needed'",
                             # Clean non-deterministic files that cause hash mismatches
@@ -103,12 +104,14 @@ class BackendPipelineStack(Stack):
                     "build": {
                         "commands": [
                             "echo 'Deploying backend stacks...'",
-                            # Deploy stacks in order: Data -> Compute -> AdminInsights -> Api
-                            # AdminInsightsStack must be deployed with ComputeStack because it
-                            # imports layer ARNs. If layers change, both stacks must update together.
+                            # Deploy stacks in order: Data -> Compute -> Api -> AdminInsights
+                            # AdminInsightsStack must be deployed LAST after ComputeStack because it
+                            # imports layer ARNs. This order ensures layer exports are updated before
+                            # AdminInsightsStack tries to import them, avoiding export conflicts.
                             "cdk deploy E-Com67-DataStack --require-approval never",
-                            "cdk deploy E-Com67-ComputeStack E-Com67-AdminInsightsStack --require-approval never",
+                            "cdk deploy E-Com67-ComputeStack --require-approval never",
                             "cdk deploy E-Com67-ApiStack --require-approval never",
+                            "cdk deploy E-Com67-AdminInsightsStack --require-approval never",
                         ]
                     }
                 },
