@@ -6,6 +6,12 @@ order history, order details, and tracking information with proper
 authentication and authorization.
 """
 
+# IMPORTANT: Import otel_fix FIRST to prevent OpenTelemetry initialization conflicts
+try:
+    import otel_fix  # Sets OTEL_PYTHON_CONTEXT before any other imports
+except ImportError:
+    pass  # otel_fix is in the strands layer, might not be available in local dev
+
 import json
 import os
 import logging

@@ -6,6 +6,12 @@ adding, updating, removing items, and retrieving cart contents with
 real-time validation and pricing.
 """
 
+# IMPORTANT: Import otel_fix FIRST to prevent OpenTelemetry initialization conflicts
+try:
+    import otel_fix  # Sets OTEL_PYTHON_CONTEXT before any other imports
+except ImportError:
+    pass  # otel_fix is in the strands layer, might not be available in local dev
+
 import json
 import os
 import logging

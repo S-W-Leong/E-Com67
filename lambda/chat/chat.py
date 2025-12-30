@@ -6,6 +6,12 @@ Handles WebSocket connections and provides intelligent product recommendations,
 cart management, and order tracking through custom tools.
 """
 
+# IMPORTANT: Import otel_fix FIRST to prevent OpenTelemetry initialization conflicts
+try:
+    import otel_fix  # Sets OTEL_PYTHON_CONTEXT before any other imports
+except ImportError:
+    pass  # otel_fix is in the strands layer, might not be available in local dev
+
 import json
 import boto3
 import logging

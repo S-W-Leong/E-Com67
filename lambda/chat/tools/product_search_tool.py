@@ -5,6 +5,12 @@ This tool enables the Strands agent to search for products using the E-Com67
 platform's OpenSearch infrastructure and provide intelligent recommendations.
 """
 
+# IMPORTANT: Import otel_fix FIRST to prevent OpenTelemetry initialization conflicts
+try:
+    import otel_fix  # Sets OTEL_PYTHON_CONTEXT before any other imports
+except ImportError:
+    pass  # otel_fix is in the strands layer, might not be available in local dev
+
 import json
 import os
 import logging
