@@ -510,7 +510,9 @@ class ComputeStack(Stack):
                 "PLATFORM_VERSION": "1.0.0",
                 "POWERTOOLS_SERVICE_NAME": "chat",
                 "POWERTOOLS_METRICS_NAMESPACE": "E-Com67",
-                "LOG_LEVEL": "INFO"
+                "LOG_LEVEL": "INFO",
+                # OpenTelemetry context provider for Lambda environment
+                "OTEL_PYTHON_CONTEXT": "contextvars_context"
             },
             tracing=_lambda.Tracing.ACTIVE,
             timeout=Duration.seconds(30),
