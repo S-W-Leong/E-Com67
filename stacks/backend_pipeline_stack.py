@@ -85,11 +85,12 @@ class BackendPipelineStack(Stack):
                             # with no external dependencies - the source files are used directly
                             "rm -rf layers/powertools/python layers/stripe/python layers/opensearch/python layers/strands/python",
                             # Install layer dependencies with platform targeting for Lambda
+                            # Use --python-version 3.10 to ensure binary compatibility with Lambda Python 3.10 runtime
                             "pip install -r layers/powertools/requirements.txt -t layers/powertools/python/ --no-cache-dir --platform manylinux2014_x86_64 --only-binary=:all: || pip install -r layers/powertools/requirements.txt -t layers/powertools/python/ --no-cache-dir",
                             "pip install -r layers/stripe/requirements.txt -t layers/stripe/python/ --no-cache-dir --platform manylinux2014_x86_64 --only-binary=:all: || pip install -r layers/stripe/requirements.txt -t layers/stripe/python/ --no-cache-dir",
                             "pip install -r layers/opensearch/requirements.txt -t layers/opensearch/python/ --no-cache-dir --platform manylinux2014_x86_64 --only-binary=:all: || pip install -r layers/opensearch/requirements.txt -t layers/opensearch/python/ --no-cache-dir",
-                            # Strands layer: Use Docker with Lambda Python 3.10 image for binary compatibility
-                            "docker run --rm --platform linux/amd64 -v \"$(pwd)/layers/strands:/var/task\" -w /var/task public.ecr.aws/lambda/python:3.10 pip install -r requirements-minimal.txt -t python/ --upgrade --no-cache-dir",
+                            # Strands layer: Use pip with explicit Python version and platform for Lambda compatibility
+                            "pip install -r layers/strands/requirements-minimal.txt -t layers/strands/python/ --no-cache-dir --platform manylinux2014_x86_64 --python-version 3.10 --only-binary=:all: --implementation cp || pip install -r layers/strands/requirements-minimal.txt -t layers/strands/python/ --no-cache-dir",
                             # Utils layer has no external dependencies - just ensure the structure is correct
                             "echo 'Utils layer already contains pure Python code - no build needed'",
                             # Clean non-deterministic files that cause hash mismatches
