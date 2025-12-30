@@ -105,14 +105,15 @@ class BackendPipelineStack(Stack):
                     "build": {
                         "commands": [
                             "echo 'Deploying backend stacks...'",
-                            # Deploy stacks in order: Data -> Compute -> Api -> AdminInsights
-                            # AdminInsightsStack must be deployed LAST after ComputeStack because it
-                            # imports layer ARNs. This order ensures layer exports are updated before
-                            # AdminInsightsStack tries to import them, avoiding export conflicts.
+                            # Deploy stacks in order: Data -> (Compute + AdminInsights together) -> Api
+                            # ComputeStack and AdminInsightsStack are deployed together using --exclusively
+                            # to avoid CloudFormation export conflicts when layer versions change.
+                            # The old layer exports are removed from ComputeStack, but CloudFormation
+                            # won't allow removing an export while it's still imported by AdminInsightsStack.
+                            # Using --exclusively ensures both stacks update atomically.
                             "cdk deploy E-Com67-DataStack --require-approval never",
-                            "cdk deploy E-Com67-ComputeStack --require-approval never",
+                            "cdk deploy E-Com67-ComputeStack E-Com67-AdminInsightsStack --exclusively --require-approval never",
                             "cdk deploy E-Com67-ApiStack --require-approval never",
-                            "cdk deploy E-Com67-AdminInsightsStack --require-approval never",
                         ]
                     }
                 },
