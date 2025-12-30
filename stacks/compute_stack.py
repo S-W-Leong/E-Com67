@@ -511,8 +511,12 @@ class ComputeStack(Stack):
                 "POWERTOOLS_SERVICE_NAME": "chat",
                 "POWERTOOLS_METRICS_NAMESPACE": "E-Com67",
                 "LOG_LEVEL": "INFO",
-                # Disable OpenTelemetry SDK to avoid entry point discovery issues in Lambda
-                "OTEL_SDK_DISABLED": "true"
+                # OpenTelemetry configuration for Lambda
+                "OTEL_SDK_DISABLED": "true",
+                "OTEL_PYTHON_CONTEXT": "contextvars_context",
+                "OTEL_PYTHON_DISABLED_INSTRUMENTATIONS": "all",
+                # Enable bypass approach for maximum reliability (can be set to "false" to use patching)
+                "OTEL_BYPASS_ENABLED": "true"
             },
             tracing=_lambda.Tracing.ACTIVE,
             timeout=Duration.seconds(30),

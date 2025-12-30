@@ -12,6 +12,15 @@ try:
 except ImportError:
     pass  # otel_fix is in the strands layer, might not be available in local dev
 
+# If the patching approach doesn't work, try the bypass approach
+try:
+    # Check if we should use the bypass (can be set via environment variable)
+    import os
+    if os.environ.get('OTEL_BYPASS_ENABLED', 'false').lower() == 'true':
+        import otel_bypass
+except ImportError:
+    pass
+
 import json
 import boto3
 import logging
